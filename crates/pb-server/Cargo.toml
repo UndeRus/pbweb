@@ -1,0 +1,13 @@
+[package]
+name = "pb-server"
+version = "0.1.2"
+edition = "2021"
+
+[dependencies]
+pb-core = { path = "../pb-core" }
+pb-sys = { path = "../pb-sys" }
+tiny_http = "0.12"
+serde_json = "1"
+urlencoding = "2"
+mime_guess = "2"
+zip = { version = "2", default-features = false }

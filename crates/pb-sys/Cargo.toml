@@ -1,0 +1,9 @@
+[package]
+name = "pb-sys"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal hand-written FFI for PocketBook InkView (no bindgen, portable across FW 5.x-6.x)"
+
+[features]
+default = []
+device = []  # enable only when linking against real libinkview on device target

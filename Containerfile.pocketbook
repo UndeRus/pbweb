@@ -1,0 +1,53 @@
+# PocketBook SDK 6.5 (branch 6.5) + Rust cross toolchain
+# Build: podman build -f Containerfile.pocketbook -t pbweb-sdk .
+# Run:   podman run --rm -v .:/work -w /work pbweb-sdk cargo build --release --target arm-unknown-linux-gnueabi
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV SDK_ROOT=/opt/pocketbook-sdk
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git ca-certificates curl wget unzip \
+    build-essential clang llvm pkg-config \
+    cmake ninja-build python3 \
+    libfreetype6-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- PocketBook SDK 6.5 ---
+# NOTE: full SDK-B288 is large (~1-2GB). Clone shallow, branch 6.5.
+RUN mkdir -p /opt && \
+    git clone --depth 1 --branch 6.5 https://github.com/pocketbook/SDK_6.3.0.git ${SDK_ROOT} && \
+    ls -R ${SDK_ROOT} | head -n 100
+
+# update_path.sh generates CMAKE_TOOLCHAIN_FILEs under share/cmake
+RUN if [ -x "${SDK_ROOT}/bin/update_path.sh" ]; then ${SDK_ROOT}/bin/update_path.sh || true; fi; \
+    ls ${SDK_ROOT}/share/cmake 2>/dev/null || true; \
+    ls ${SDK_ROOT}/SDK-B288/usr/bin/ 2>/dev/null | head -n 50 || true
+
+# --- Rust ---
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable && \
+    /root/.cargo/bin/rustup target add arm-unknown-linux-gnueabi armv7-unknown-linux-gnueabi
+
+ENV PATH="/root/.cargo/bin:${PATH}"
+ENV SDK_ROOT_DIR=${SDK_ROOT}
+# bindgen needs sysroot + freetype includes from SDK sysroot:
+# docker caller must still export BINDGEN_EXTRA_CLANG_ARGS at build time (see README / build.sh)
+WORKDIR /work
+
+# --- Legacy SDK compat (appended last to keep earlier layers cached) ---
+# The old buildroot toolchain (arm-obreey-linux-gnueabi-clang.br_real) was
+# linked against ncurses5 and needs the versioned symbols NCURSES_TINFO_5.0*,
+# so a libtinfo.so.6 symlink is NOT enough. Install genuine ncurses5 debs
+# from frozen bullseye (stable filenames, no apt repo needed on bookworm).
+RUN rm -f /lib/x86_64-linux-gnu/libtinfo.so.5 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 && \
+    cd /tmp && \
+    wget -q \
+      https://ftp.debian.org/debian/pool/main/n/ncurses/libtinfo5_6.2+20201114-2+deb11u2_amd64.deb \
+      https://ftp.debian.org/debian/pool/main/n/ncurses/libncurses5_6.2+20201114-2+deb11u2_amd64.deb && \
+    dpkg -i libtinfo5_*.deb libncurses5_*.deb && \
+    rm -f libtinfo5_*.deb libncurses5_*.deb && \
+    ldconfig && \
+    ldconfig -p | grep -E "libtinfo|libncurses" || true
+
+# Fail fast with a clear message if the cross linker still cannot start.
+RUN ${SDK_ROOT}/SDK-B288/usr/bin/arm-obreey-linux-gnueabi-clang --version

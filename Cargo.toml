@@ -1,0 +1,14 @@
+[workspace]
+members = [
+  "crates/pb-sys",
+  "crates/pb-core",
+  "crates/pb-server",
+  "crates/pb-ui",
+  "crates/pb-app",
+]
+resolver = "2"
+
+[profile.release]
+strip = true
+lto = false
+panic = "abort"

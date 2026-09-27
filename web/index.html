@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PBWeb — PocketBook files</title>
+<style>
+:root{
+  --font-color:#333; --bg:#f5f5f5; --title-color:#2c3e50; --card-bg:#FFF;
+  --label-color:#7f8c8d; --border-color:#eee;
+  --accent-color:rgb(110,154,130); --accent-10:rgba(110,154,130,.12);
+  --accent-hover-color:#5a8c73; --danger:#c0392b;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --font-color:#f5f5f5; --bg:#333; --title-color:#ecf0f1; --card-bg:#444;
+    --label-color:#bdc3c7; --border-color:#555; color-scheme:dark; }
+}
+body{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,sans-serif;
+  max-width:800px; margin:0 auto; padding:20px; background:var(--bg); color:var(--font-color); }
+h1{ color:var(--title-color); border-bottom:2px solid var(--accent-color); padding-bottom:10px; }
+h2{ color:var(--title-color); margin:0 0 10px; }
+.card{ background:var(--card-bg); border-radius:8px; padding:20px; margin:15px 0;
+  box-shadow:0 2px 4px rgba(0,0,0,.1); }
+.info-row{ display:flex; justify-content:space-between; align-items:center; gap:10px;
+  padding:8px 0; border-bottom:1px solid var(--border-color); }
+.info-row:last-child{ border-bottom:none; }
+.label{ font-weight:600; color:var(--label-color); }
+.value{ color:var(--title-color); overflow:hidden; text-overflow:ellipsis; }
+.status{ display:inline-block; padding:4px 12px; border-radius:12px;
+  background:#27ae60; color:#fff; font-size:.9em; }
+.nav-links{ margin:20px 0; display:flex; gap:10px; }
+.nav-links a{ padding:10px 20px; color:var(--font-color); text-decoration:none; border-radius:4px; }
+.nav-links a.active{ background:var(--accent-color); color:#fff; }
+.nav-links a:not(.active):hover{ background:var(--accent-hover-color); color:#fff; }
+.toolbar{ display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
+.btn{ padding:8px 14px; border:1px solid var(--border-color); border-radius:4px;
+  background:var(--card-bg); color:var(--font-color); cursor:pointer; font-size:.92em; }
+.btn:hover:not(:disabled){ background:var(--accent-hover-color); color:#fff; border-color:var(--accent-hover-color); }
+.btn.primary{ background:var(--accent-color); border-color:var(--accent-color); color:#fff; }
+.btn.danger{ background:var(--danger); border-color:var(--danger); color:#fff; }
+.btn:disabled{ opacity:.45; cursor:default; }
+.breadcrumb-inline{ display:flex; gap:4px; flex-wrap:wrap; align-items:center; }
+.breadcrumb-inline button{ border:none; background:none; color:var(--accent-color);
+  cursor:pointer; font-size:1em; padding:2px 4px; }
+.breadcrumb-inline button:hover{ text-decoration:underline; }
+.summary-inline{ color:var(--label-color); font-size:.9em; margin-left:auto; }
+table{ width:100%; border-collapse:collapse; }
+th,td{ text-align:left; padding:9px 8px; border-bottom:1px solid var(--border-color); }
+th{ color:var(--label-color); font-size:.85em; text-transform:uppercase; }
+tr.rowlink{ cursor:pointer; }
+tr.rowlink:hover td{ background:var(--accent-10); }
+td.name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:260px; }
+.actions{ white-space:nowrap; }
+.icon-btn{ border:1px solid var(--border-color); background:var(--card-bg); color:var(--font-color);
+  border-radius:4px; padding:5px 9px; margin:0 2px; cursor:pointer; font-size:.9em; }
+.icon-btn:hover{ background:var(--accent-hover-color); color:#fff; }
+.drop-zone{ border:2px dashed var(--accent-color); border-radius:8px; padding:22px;
+  text-align:center; color:var(--label-color); margin:12px 0; cursor:pointer; }
+.drop-zone.over{ background:var(--accent-10); }
+#progress-container{ display:none; margin:12px 0; }
+#progress-bar{ height:10px; background:var(--border-color); border-radius:5px; overflow:hidden; }
+#progress-fill{ height:100%; width:0; background:var(--accent-color); }
+#progress-text{ font-size:.85em; color:var(--label-color); margin-top:4px; }
+.failed-banner{ display:none; background:#fdecea; color:var(--danger);
+  border-radius:8px; padding:12px 16px; margin:15px 0; }
+.modal-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.45);
+  align-items:center; justify-content:center; z-index:10; padding:16px; }
+.modal-overlay.open{ display:flex; }
+.modal{ background:var(--card-bg); border-radius:8px; padding:20px; width:100%; max-width:420px; }
+.modal h2{ margin-bottom:6px; }
+.file-info{ color:var(--label-color); }
+.folder-input{ width:100%; padding:9px 10px; border:1px solid var(--border-color);
+  border-radius:4px; background:var(--bg); color:var(--font-color); margin:8px 0 12px; }
+.modal .row{ display:flex; gap:8px; justify-content:flex-end; }
+.footer{ text-align:center; color:#95a5a6; margin:0; }
+.muted{ color:var(--label-color); font-size:.9em; }
+</style>
+</head>
+<body>
+<h1>PBWeb</h1>
+<div class="nav-links">
+  <a href="#/" id="navHome" class="active">Home</a>
+  <a href="#/files" id="navFiles">File Manager</a>
+</div>
+
+<!-- HOME -->
+<section id="viewHome">
+  <div class="card">
+    <h2>Device Status</h2>
+    <div class="info-row"><span class="label">Device</span><span class="value" id="stDevice">PocketBook</span></div>
+    <div class="info-row"><span class="label">Version</span><span class="value" id="stVersion">…</span></div>
+    <div class="info-row"><span class="label">WiFi Status</span><span class="status">Connected</span></div>
+    <div class="info-row"><span class="label">IP Address</span><span class="value" id="stIp">…</span></div>
+    <div class="info-row"><span class="label">Storage</span><span class="value" id="stRoots">…</span></div>
+  </div>
+  <div class="card"><p class="footer">PBWeb • PocketBook file transfer</p></div>
+</section>
+
+<!-- FILES -->
+<section id="viewFiles" style="display:none">
+  <div class="failed-banner" id="failedBanner"></div>
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <h2>File Manager</h2>
+      <span class="summary-inline" id="folderSummary"></span>
+    </div>
+    <div class="breadcrumb-inline" id="crumbs" style="margin:8px 0"></div>
+    <div class="toolbar">
+      <button class="btn" id="btnInt">internal</button>
+      <button class="btn" id="btnSd">sdcard</button>
+      <button class="btn primary" id="btnUpload">Upload</button>
+      <button class="btn" id="btnMkdir">New folder</button>
+      <button class="btn" id="btnZip">Download .zip</button>
+      <button class="btn danger" id="btnDelSel" disabled>Delete selected</button>
+    </div>
+    <input type="file" id="fileInput" multiple hidden>
+    <div class="drop-zone" id="dropZone">Drop files here or click Upload</div>
+    <div id="progress-container">
+      <div id="progress-bar"><div id="progress-fill"></div></div>
+      <div id="progress-text"></div>
+    </div>
+    <div id="fileTable"><p class="muted">Loading…</p></div>
+  </div>
+  <div class="card"><p class="footer">Uploads overwrite same-name files • only empty folders can be deleted</p></div>
+</section>
+
+<!-- MODALS -->
+<div class="modal-overlay" id="folderModal">
+  <div class="modal">
+    <h2>New folder</h2>
+    <p class="file-info">Create in <strong id="folderPathDisplay"></strong></p>
+    <input type="text" id="folderName" class="folder-input" placeholder="Folder name...">
+    <div class="row">
+      <button class="btn" data-close>Cancel</button>
+      <button class="btn primary" id="createFolderBtn">Create Folder</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="renameModal">
+  <div class="modal">
+    <h2>Rename</h2>
+    <p class="file-info">Renaming <strong id="renameItemName"></strong></p>
+    <input type="text" id="renameNewName" class="folder-input" placeholder="New name...">
+    <input type="hidden" id="renameItemPath">
+    <div class="row">
+      <button class="btn" data-close>Cancel</button>
+      <button class="btn primary" id="renameConfirmBtn">Rename</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="moveModal">
+  <div class="modal">
+    <h2>Move</h2>
+    <p class="file-info">Moving <strong id="moveItemName"></strong></p>
+    <input type="text" id="moveDestPath" class="folder-input" list="moveFolderOptions" placeholder="int:/Destination/Folder">
+    <datalist id="moveFolderOptions"></datalist>
+    <input type="hidden" id="moveItemPath">
+    <div class="row">
+      <button class="btn" data-close>Cancel</button>
+      <button class="btn primary" id="moveConfirmBtn">Move</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="deleteModal">
+  <div class="modal">
+    <h2>Delete?</h2>
+    <div id="deleteItemList" style="max-height:240px;overflow:auto;margin-bottom:10px"></div>
+    <div class="row">
+      <button class="btn" data-close>Cancel</button>
+      <button class="btn danger" id="deleteConfirmBtn">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let cur = "int:/";
+let itemsCache = [];
+let pendingDelete = [];
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function api(u, o) {
+  const r = await fetch(u, o);
+  const ct = r.headers.get("content-type") || "";
+  const body = ct.includes("json") ? await r.json() : await r.text();
+  if (!r.ok) throw new Error((body && body.error) || (typeof body === "string" ? body : r.statusText).slice(0, 300));
+  return body;
+}
+function fail(msg) {
+  const b = $("#failedBanner");
+  b.style.display = "block";
+  b.textContent = msg;
+  clearTimeout(fail._t);
+  fail._t = setTimeout(() => b.style.display = "none", 6000);
+}
+
+// ---- nav ----
+function route() {
+  const files = location.hash.startsWith("#/files");
+  $("#viewHome").style.display = files ? "none" : "";
+  $("#viewFiles").style.display = files ? "" : "none";
+  $("#navHome").className = files ? "" : "active";
+  $("#navFiles").className = files ? "active" : "";
+  if (files) load(cur);
+  else loadStatus();
+}
+window.addEventListener("hashchange", route);
+
+// ---- status ----
+async function loadStatus() {
+  try {
+    const s = await api("/api/status");
+    $("#stVersion").textContent = "pbweb " + (s.version || "?");
+    $("#stIp").textContent = s.ip || location.host;
+    $("#stDevice").textContent = s.device || "PocketBook";
+    $("#stRoots").textContent = "internal" + (s.roots && s.roots.sdcard ? " + sdcard" : "");
+  } catch (e) { $("#stIp").textContent = location.host; }
+}
+
+// ---- files ----
+function fmt(n) {
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + "G";
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
+  return n + "B";
+}
+function ftype(it) {
+  if (it.is_dir) return "Folder";
+  const m = /\.([a-z0-9]+)$/i.exec(it.name);
+  const e = (m && m[1].toLowerCase()) || "";
+  if (["epub", "fb2", "fb2.zip", "pdf", "djvu", "mobi", "azw3", "txt"].includes(e)) return "Book";
+  if (["jpg", "jpeg", "png", "gif", "bmp", "webp"].includes(e)) return "Image";
+  if (["mp3", "m4b", "ogg"].includes(e)) return "Audio";
+  return (e || "file").toUpperCase();
+}
+async function load(p) {
+  cur = p || cur;
+  try {
+    const items = await api("/api/files?path=" + encodeURIComponent(cur));
+    itemsCache = items;
+    const ndirs = items.filter(i => i.is_dir).length;
+    $("#folderSummary").textContent = cur + " — " + items.length + " items (" + ndirs + " folders)";
+    crumbs();
+    const t = $("#fileTable");
+    if (!items.length) { t.innerHTML = '<p class="muted">Empty folder</p>'; $("#btnDelSel").disabled = true; return; }
+    let h = '<table><tr><th style="width:34px"><input type="checkbox" id="selAll"></th><th>Name</th><th>Type</th><th>Size</th><th>Actions</th></tr>';
+    for (const it of items) {
+      const nm = esc(it.name);
+      h += '<tr data-path="' + esc(it.path) + '" data-dir="' + (it.is_dir ? 1 : 0) + '" data-name="' + nm + '">'
+        + '<td><input type="checkbox" class="sel"></td>'
+        + '<td class="name">' + (it.is_dir ? "📁 " : "📄 ") + nm + "</td>"
+        + "<td>" + ftype(it) + "</td>"
+        + "<td>" + (it.is_dir ? "—" : fmt(it.size)) + "</td>"
+        + '<td class="actions">'
+        + (it.is_dir
+            ? '<button class="icon-btn" data-act="zip" title="Download as zip">🗜</button>'
+            : '<button class="icon-btn" data-act="dl" title="Download">⬇</button>')
+        + '<button class="icon-btn" data-act="ren" title="Rename">✏</button>'
+        + '<button class="icon-btn" data-act="mv" title="Move">➡</button>'
+        + '<button class="icon-btn" data-act="del" title="Delete">🗑</button>'
+        + "</td></tr>";
+    }
+    t.innerHTML = h + "</table>";
+    $("#selAll").onchange = e => {
+      document.querySelectorAll(".sel").forEach(c => c.checked = e.target.checked);
+      updDelBtn();
+    };
+    t.querySelectorAll(".sel").forEach(c => c.onchange = updDelBtn);
+    t.querySelectorAll("tr[data-path]").forEach(tr => {
+      tr.addEventListener("click", e => {
+        if (e.target.closest("button") || e.target.type === "checkbox") return;
+        if (tr.dataset.dir === "1") load(tr.dataset.path);
+      });
+      tr.querySelectorAll("[data-act]").forEach(b => b.onclick = () => act(b.dataset.act, tr));
+    });
+    updDelBtn();
+  } catch (e) { fail("load: " + e.message); }
+}
+function updDelBtn() {
+  $("#btnDelSel").disabled = !document.querySelector(".sel:checked");
+}
+function crumbs() {
+  const c = $("#crumbs"); c.innerHTML = "";
+  const [root, rest] = cur.split(":/");
+  const parts = (rest || "").split("/").filter(Boolean);
+  const mk = (label, path) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.onclick = () => load(path);
+    c.appendChild(b);
+    const s = document.createElement("span"); s.textContent = "/"; s.style.color = "var(--label-color)";
+    c.appendChild(s);
+  };
+  mk(root + ":", root + ":/");
+  let acc = "";
+  for (const p of parts) { acc += "/" + p; mk(p, root + ":" + acc); }
+  if (c.lastChild) c.removeChild(c.lastChild);
+}
+
+// ---- row actions ----
+function act(kind, tr) {
+  const path = tr.dataset.path, name = tr.dataset.name, isDir = tr.dataset.dir === "1";
+  if (kind === "dl") { location.href = "/api/download?path=" + encodeURIComponent(path); }
+  else if (kind === "zip") { location.href = "/api/zip?path=" + encodeURIComponent(path); }
+  else if (kind === "ren") {
+    $("#renameItemName").textContent = name;
+    $("#renameItemPath").value = path;
+    $("#renameNewName").value = name;
+    openModal("#renameModal");
+  }
+  else if (kind === "mv") {
+    $("#moveItemName").textContent = name;
+    $("#moveItemPath").value = path;
+    $("#moveDestPath").value = cur;
+    const dl = $("#moveFolderOptions"); dl.innerHTML = "";
+    for (const it of itemsCache) if (it.is_dir) {
+      const o = document.createElement("option"); o.value = it.path; dl.appendChild(o);
+    }
+    openModal("#moveModal");
+  }
+  else if (kind === "del") { pendingDelete = [path]; showDelete([name]); }
+}
+function selectedPaths() {
+  return [...document.querySelectorAll("tr[data-path]")].filter(tr => tr.querySelector(".sel").checked);
+}
+
+// ---- modals ----
+function openModal(s) { $(s).classList.add("open"); }
+function closeModals() { document.querySelectorAll(".modal-overlay").forEach(m => m.classList.remove("open")); }
+document.querySelectorAll("[data-close]").forEach(b => b.onclick = closeModals);
+document.querySelectorAll(".modal-overlay").forEach(m => m.addEventListener("click", e => { if (e.target === m) closeModals(); }));
+
+$("#btnMkdir").onclick = () => { $("#folderPathDisplay").textContent = cur; $("#folderName").value = ""; openModal("#folderModal"); };
+$("#createFolderBtn").onclick = async () => {
+  const name = $("#folderName").value.trim();
+  if (!name) return;
+  try { await api("/api/mkdir", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: cur, name }) }); closeModals(); load(); }
+  catch (e) { fail("mkdir: " + e.message); }
+};
+$("#renameConfirmBtn").onclick = async () => {
+  const path = $("#renameItemPath").value, name = $("#renameNewName").value.trim();
+  if (!name) return;
+  try { await api("/api/rename", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, name }) }); closeModals(); load(); }
+  catch (e) { fail("rename: " + e.message); }
+};
+$("#moveConfirmBtn").onclick = async () => {
+  const path = $("#moveItemPath").value, dest = $("#moveDestPath").value.trim();
+  if (!dest) return;
+  try { await api("/api/move", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, dest }) }); closeModals(); load(); }
+  catch (e) { fail("move: " + e.message); }
+};
+function showDelete(names) {
+  $("#deleteItemList").innerHTML = names.map(n => "<div>" + esc(n) + "</div>").join("");
+  openModal("#deleteModal");
+}
+$("#btnDelSel").onclick = () => {
+  const sel = selectedPaths();
+  pendingDelete = sel.map(tr => tr.dataset.path);
+  showDelete(sel.map(tr => tr.dataset.name));
+};
+$("#deleteConfirmBtn").onclick = async () => {
+  try { await api("/api/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paths: pendingDelete }) }); closeModals(); load(); }
+  catch (e) { fail("delete: " + e.message); }
+};
+$("#btnZip").onclick = () => { location.href = "/api/zip?path=" + encodeURIComponent(cur); };
+
+// ---- upload (XHR for progress) ----
+$("#btnUpload").onclick = () => $("#fileInput").click();
+$("#dropZone").onclick = () => $("#fileInput").click();
+const dz = $("#dropZone");
+["dragover", "dragenter"].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove("over"); }));
+dz.addEventListener("drop", e => uploadFiles(e.dataTransfer.files));
+$("#fileInput").onchange = e => { uploadFiles(e.target.files); e.target.value = ""; };
+function uploadFiles(files) {
+  if (!files || !files.length) return;
+  const fd = new FormData();
+  for (const f of files) fd.append("files", f, f.name);
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "/api/upload?path=" + encodeURIComponent(cur));
+  $("#progress-container").style.display = "block";
+  xhr.upload.onprogress = e => {
+    const pct = e.lengthComputable ? Math.round(e.loaded / e.total * 100) : 0;
+    $("#progress-fill").style.width = pct + "%";
+    $("#progress-text").textContent = "Uploading… " + pct + "%";
+  };
+  xhr.onload = () => {
+    $("#progress-container").style.display = "none";
+    $("#progress-fill").style.width = "0";
+    if (xhr.status >= 200 && xhr.status < 300) load();
+    else fail("upload: " + xhr.responseText.slice(0, 200));
+  };
+  xhr.onerror = () => { $("#progress-container").style.display = "none"; fail("upload failed"); };
+  xhr.send(fd);
+}
+
+// ---- roots ----
+$("#btnInt").onclick = () => load("int:/");
+$("#btnSd").onclick = async () => {
+  try { const r = await api("/api/roots"); if (!r.sdcard) { fail("no sdcard"); return; } load("sd:/"); }
+  catch (e) { fail(e.message); }
+};
+
+route();
+</script>
+</body>
+</html>

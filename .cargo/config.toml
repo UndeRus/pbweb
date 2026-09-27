@@ -1,0 +1,20 @@
+# Host builds use default linker. PocketBook cross builds happen INSIDE container.
+# Target CPU PocketBook Color 633 (Yitoa) ~ Cortex-A7.
+[build]
+# do NOT force target globally: host `cargo test` must stay on x86_64.
+
+[target.arm-unknown-linux-gnueabi]
+linker = "arm-obreey-linux-gnueabi-clang"
+rustflags = [
+  "-C", "target-cpu=cortex-a7",
+  "-C", "link-arg=-linkview",
+  "-C", "link-arg=-lpthread",
+]
+
+[target.armv7-unknown-linux-gnueabihf]
+linker = "arm-obreey-linux-gnueabi-clang"
+rustflags = [
+  "-C", "target-cpu=cortex-a7",
+  "-C", "link-arg=-linkview",
+  "-C", "link-arg=-lpthread",
+]
