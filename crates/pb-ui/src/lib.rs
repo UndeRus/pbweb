@@ -35,7 +35,7 @@ impl Default for UiState {
             ssid: String::new(),
             ip: String::from("-"),
             port: 8080,
-            message: String::from("Press START"),
+            message: String::from("Нажми СТАРТ"),
             files_page: 0,
             current_dir: String::from("int:/"),
             selection: 0,
@@ -95,18 +95,17 @@ impl UiState {
 
 /// Pure layout helper: rows per page for file list given screen height.
 pub fn files_per_page(screen_h: i32) -> usize {
-    let usable = (screen_h - HEADER_H - BOTTOM_H - 60).max(200) as usize;
-    (usable / ROW_H as usize).clamp(3, 12)
+    let usable = (screen_h - 340).max(200) as usize;
+    (usable / ROW_H as usize).clamp(3, 16)
 }
 
 // ---- Big touch buttons (all actions reachable by tap) ----
 
-pub const HEADER_H: i32 = 80;
-pub const BOTTOM_H: i32 = 130;
-pub const ROW_H: i32 = 64;
+pub const BOTTOM_H: i32 = 150;
+pub const ROW_H: i32 = 72;
 pub const GAP: i32 = 16;
 /// Y of the first file row (must match draw code in pb-app).
-pub const LIST_Y0: i32 = HEADER_H + 12;
+pub const LIST_Y0: i32 = 96;
 
 /// File-row index for a tap at height y, or None if outside rows.
 pub fn row_at(y: i32, page_first: usize, per_page: usize, total: usize) -> Option<usize> {
@@ -120,9 +119,9 @@ pub fn row_at(y: i32, page_first: usize, per_page: usize, total: usize) -> Optio
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BtnId {
-    StartStop,
+    Primary,
+    Tabs,
     Exit,
-    Up,
 }
 
 #[derive(Debug, Clone)]
@@ -135,54 +134,48 @@ pub struct Btn {
     pub label: String,
 }
 
-/// Bottom button bar for the given tab. Buttons are tall (>=96px) for taps.
+/// Bottom button bar: always 3 big buttons.
+/// Primary = START/STOP (status, log) or UP (files).
 pub fn bottom_buttons(tab: Tab, server_on: bool, sw: i32, sh: i32) -> Vec<Btn> {
-    let y = sh - BOTTOM_H + 16;
-    let h = BOTTOM_H - 32;
-    let exit = Btn {
-        id: BtnId::Exit,
-        x: sw / 2 + GAP / 2,
-        y,
-        w: sw / 2 - GAP - GAP / 2,
-        h,
-        label: "EXIT".into(),
+    let y = sh - BOTTOM_H + 20;
+    let h = BOTTOM_H - 40;
+    let w = (sw - 4 * GAP) / 3;
+    let primary_label = match tab {
+        Tab::Files => "ВВЕРХ".to_string(),
+        _ => {
+            if server_on {
+                "СТОП".to_string()
+            } else {
+                "СТАРТ".to_string()
+            }
+        }
     };
-    match tab {
-        Tab::Status => vec![
-            Btn {
-                id: BtnId::StartStop,
-                x: GAP,
-                y,
-                w: sw / 2 - GAP - GAP / 2,
-                h,
-                label: if server_on {
-                    "STOP".into()
-                } else {
-                    "START".into()
-                },
-            },
-            exit,
-        ],
-        Tab::Files => vec![
-            Btn {
-                id: BtnId::Up,
-                x: GAP,
-                y,
-                w: sw / 2 - GAP - GAP / 2,
-                h,
-                label: "UP".into(),
-            },
-            exit,
-        ],
-        Tab::Log => vec![Btn {
-            id: BtnId::Exit,
+    vec![
+        Btn {
+            id: BtnId::Primary,
             x: GAP,
             y,
-            w: sw - 2 * GAP,
+            w,
             h,
-            label: "EXIT".into(),
-        }],
-    }
+            label: primary_label,
+        },
+        Btn {
+            id: BtnId::Tabs,
+            x: 2 * GAP + w,
+            y,
+            w,
+            h,
+            label: "ЭКРАН".to_string(),
+        },
+        Btn {
+            id: BtnId::Exit,
+            x: 3 * GAP + 2 * w,
+            y,
+            w,
+            h,
+            label: "ВЫХОД".to_string(),
+        },
+    ]
 }
 
 pub fn hit_button(btns: &[Btn], x: i32, y: i32) -> Option<BtnId> {
@@ -224,17 +217,21 @@ mod tests {
     }
     #[test]
     fn buttons_cover_bottom_and_hit() {
-        // 758x1024 (PB633 class): buttons tall enough for fingers
-        let bs = bottom_buttons(Tab::Status, false, 758, 1024);
-        assert_eq!(bs.len(), 2);
-        assert!(bs.iter().all(|b| b.h >= 90));
-        assert_eq!(hit_button(&bs, 100, 1024 - 60), Some(BtnId::StartStop));
-        assert_eq!(hit_button(&bs, 700, 1024 - 60), Some(BtnId::Exit));
+        // 1072x1448 (PB633): 3 tall buttons
+        let bs = bottom_buttons(Tab::Status, false, 1072, 1448);
+        assert_eq!(bs.len(), 3);
+        assert!(bs.iter().all(|b| b.h >= 100));
+        assert_eq!(bs[0].label, "СТАРТ");
+        assert_eq!(hit_button(&bs, 100, 1448 - 60), Some(BtnId::Primary));
+        assert_eq!(hit_button(&bs, 536, 1448 - 60), Some(BtnId::Tabs));
+        assert_eq!(hit_button(&bs, 1000, 1448 - 60), Some(BtnId::Exit));
         assert_eq!(hit_button(&bs, 10, 10), None);
-        let bf = bottom_buttons(Tab::Files, false, 758, 1024);
-        assert!(bf.iter().any(|b| b.id == BtnId::Up));
-        let bl = bottom_buttons(Tab::Log, true, 758, 1024);
-        assert_eq!(bl.len(), 1);
+        let bs_on = bottom_buttons(Tab::Status, true, 1072, 1448);
+        assert_eq!(bs_on[0].label, "СТОП");
+        let bf = bottom_buttons(Tab::Files, false, 1072, 1448);
+        assert_eq!(bf[0].label, "ВВЕРХ");
+        let bl = bottom_buttons(Tab::Log, true, 1072, 1448);
+        assert_eq!(bl.len(), 3);
     }
     #[test]
     fn row_hit_testing() {

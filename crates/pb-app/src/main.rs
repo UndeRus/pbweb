@@ -15,6 +15,8 @@ mod device {
     use std::sync::OnceLock;
 
     static STATE: OnceLock<Arc<Mutex<UiState>>> = OnceLock::new();
+    /// Running HTTP server (for СТОП from the GUI thread).
+    static SERVER: OnceLock<Arc<Server>> = OnceLock::new();
     const LOG_PATH: &str = "/mnt/ext1/pbweb.log";
 
     pub fn log_line(s: &str) {
@@ -32,117 +34,72 @@ mod device {
         CString::new(s).unwrap_or_default()
     }
 
+    // Font sizes: everything big for e-ink + touch.
+    const F_TITLE: i32 = 30;
+    const F_BODY: i32 = 36;
+    const F_STATE: i32 = 44;
+    const F_URL: i32 = 60;
+
+    fn open_fonts() -> Option<(*mut std::os::raw::c_void, *mut std::os::raw::c_void)> {
+        unsafe {
+            let small = iv::OpenFont(cstring("LiberationSans").as_ptr(), F_TITLE, 1);
+            let body = iv::OpenFont(cstring("LiberationSans").as_ptr(), F_BODY, 1);
+            if small.is_null() || body.is_null() {
+                log_line("draw: OpenFont NULL");
+                for f in [small, body] {
+                    if !f.is_null() {
+                        iv::CloseFont(f);
+                    }
+                }
+                iv::FullUpdate();
+                return None;
+            }
+            Some((small, body))
+        }
+    }
+
+    fn open_font_big() -> *mut std::os::raw::c_void {
+        unsafe { iv::OpenFont(cstring("LiberationSans").as_ptr(), F_URL, 1) }
+    }
+
+    fn open_font_state() -> *mut std::os::raw::c_void {
+        unsafe { iv::OpenFont(cstring("LiberationSans").as_ptr(), F_STATE, 1) }
+    }
+
     fn draw(state: &UiState) {
-        use pb_ui::{bottom_buttons, BOTTOM_H, GAP, HEADER_H};
+        use pb_ui::{bottom_buttons, BOTTOM_H, GAP};
         unsafe {
             iv::ClearScreen();
             let w = iv::ScreenWidth();
             let h = iv::ScreenHeight();
-            // header
-            iv::FillArea(0, 0, w, HEADER_H, iv::BLACK);
-            let f_title = iv::OpenFont(cstring("LiberationSans").as_ptr(), 30, 1);
-            if f_title.is_null() {
-                log_line("draw: OpenFont title NULL");
-                iv::FullUpdate();
+            let Some((f_small, f_body)) = open_fonts() else {
                 return;
-            }
-            iv::SetFont(f_title, iv::WHITE);
-            let tabname = match state.tab {
-                pb_ui::Tab::Status => "STATUS",
-                pb_ui::Tab::Files => "FILES",
-                pb_ui::Tab::Log => "LOG",
             };
-            let t = cstring(&format!("PBWeb  {tabname}"));
-            iv::DrawString(GAP, HEADER_H - 24, t.as_ptr());
-            iv::CloseFont(f_title);
-
-            let f_body = iv::OpenFont(cstring("LiberationSans").as_ptr(), 32, 1);
-            let f_big = iv::OpenFont(cstring("LiberationSans").as_ptr(), 46, 1);
-            if f_body.is_null() || f_big.is_null() {
-                log_line("draw: OpenFont body/big NULL");
-                if !f_body.is_null() {
-                    iv::CloseFont(f_body);
-                }
-                if !f_big.is_null() {
-                    iv::CloseFont(f_big);
-                }
-                iv::FullUpdate();
-                return;
-            }
-            let content_y = HEADER_H + 12;
-            let content_h = h - HEADER_H - BOTTOM_H - 24;
             match state.tab {
-                pb_ui::Tab::Status => {
-                    let wifi = if state.wifi_on {
-                        if state.ssid.is_empty() {
-                            "WiFi: ON".to_owned()
-                        } else {
-                            format!("WiFi: {}", state.ssid)
-                        }
-                    } else if state.wifi_connecting {
-                        "WiFi: connecting...".to_owned()
-                    } else {
-                        "WiFi: OFF".to_owned()
-                    };
-                    iv::SetFont(f_body, iv::BLACK);
-                    let wline = cstring(&wifi);
-                    iv::DrawTextRect(
-                        GAP,
-                        content_y,
-                        w - 2 * GAP,
-                        60,
-                        wline.as_ptr(),
-                        iv::ALIGN_LEFT,
-                    );
-                    iv::SetFont(f_big, iv::BLACK);
-                    let url = if state.server_on {
-                        state.url()
-                    } else {
-                        "press START".to_owned()
-                    };
-                    let u = cstring(&url);
-                    iv::DrawTextRect(
-                        GAP,
-                        content_y + 70,
-                        w - 2 * GAP,
-                        220,
-                        u.as_ptr(),
-                        iv::ALIGN_LEFT,
-                    );
-                    iv::SetFont(f_body, iv::BLACK);
-                    let m = cstring(&state.message);
-                    iv::DrawTextRect(
-                        GAP,
-                        content_y + 300,
-                        w - 2 * GAP,
-                        content_h - 300,
-                        m.as_ptr(),
-                        iv::ALIGN_LEFT,
-                    );
-                }
+                pb_ui::Tab::Status => draw_status(f_small, f_body, state, w, h),
                 pb_ui::Tab::Files => {
                     iv::SetFont(f_body, iv::BLACK);
-                    let dir = cstring(&state.current_dir);
-                    iv::DrawTextRect(GAP, content_y, w - 2 * GAP, 56, dir.as_ptr(), iv::ALIGN_LEFT);
+                    let dir = cstring(&format!("Файлы: {}", state.current_dir));
+                    iv::DrawTextRect(GAP, 16, w - 2 * GAP, 56, dir.as_ptr(), iv::ALIGN_LEFT);
                     draw_file_rows(f_body, state, w);
                 }
                 pb_ui::Tab::Log => {
-                    iv::SetFont(f_body, iv::BLACK);
-                    let l = cstring(&log_text(state));
+                    iv::SetFont(f_small, iv::BLACK);
+                    let l = cstring(&log_text());
                     iv::DrawTextRect(
                         GAP,
-                        content_y,
+                        16,
                         w - 2 * GAP,
-                        content_h,
+                        h - 16 - BOTTOM_H - 16,
                         l.as_ptr(),
                         iv::ALIGN_LEFT,
                     );
                 }
             }
-            // bottom buttons (big touch targets)
+            // bottom buttons: 3 big touch targets
             let btns = bottom_buttons(state.tab, state.server_on, w, h);
             for b in &btns {
-                let primary = b.id == pb_ui::BtnId::StartStop && !state.server_on;
+                let primary = b.id == pb_ui::BtnId::Primary;
                 if primary {
                     iv::FillArea(b.x, b.y, b.w, b.h, iv::BLACK);
                     iv::SetFont(f_body, iv::WHITE);
@@ -162,10 +119,103 @@ mod device {
                     iv::ALIGN_CENTER | iv::VALIGN_MIDDLE,
                 );
             }
-            // silence unused import if files_per_page unused here
+            iv::CloseFont(f_small);
             iv::CloseFont(f_body);
-            iv::CloseFont(f_big);
             iv::FullUpdate();
+        }
+    }
+
+    /// Status tab: state, huge URL, wifi, steps, upload progress, message.
+    fn draw_status(
+        f_small: *mut std::os::raw::c_void,
+        f_body: *mut std::os::raw::c_void,
+        state: &UiState,
+        w: i32,
+        h: i32,
+    ) {
+        use pb_ui::{BOTTOM_H, GAP};
+        unsafe {
+            let mut y = 16;
+            iv::SetFont(f_small, iv::BLACK);
+            let title = cstring("PBWeb - передача файлов");
+            iv::DrawTextRect(GAP, y, w - 2 * GAP, 44, title.as_ptr(), iv::ALIGN_LEFT);
+            y += 52;
+            let f_state = open_font_state();
+            if !f_state.is_null() {
+                iv::SetFont(f_state, iv::BLACK);
+                let stxt = if state.server_on {
+                    "Сервер запущен"
+                } else if state.wifi_connecting {
+                    "Подключение..."
+                } else {
+                    "Сервер остановлен"
+                };
+                let s = cstring(stxt);
+                iv::DrawTextRect(GAP, y, w - 2 * GAP, 64, s.as_ptr(), iv::ALIGN_LEFT);
+                iv::CloseFont(f_state);
+            }
+            y += 72;
+            let f_url = open_font_big();
+            if !f_url.is_null() {
+                iv::SetFont(f_url, iv::BLACK);
+                let url = if state.server_on {
+                    state.url()
+                } else {
+                    "нажми СТАРТ".to_owned()
+                };
+                let u = cstring(&url);
+                iv::DrawTextRect(GAP, y, w - 2 * GAP, 200, u.as_ptr(), iv::ALIGN_LEFT);
+                iv::CloseFont(f_url);
+            }
+            y += 208;
+            iv::SetFont(f_body, iv::BLACK);
+            let wifi = if state.wifi_on {
+                if state.ssid.is_empty() {
+                    "WiFi: включён".to_owned()
+                } else {
+                    format!("WiFi: {}", state.ssid)
+                }
+            } else {
+                "WiFi: выключен".to_owned()
+            };
+            let wl = cstring(&wifi);
+            iv::DrawTextRect(GAP, y, w - 2 * GAP, 54, wl.as_ptr(), iv::ALIGN_LEFT);
+            y += 62;
+            iv::SetFont(f_small, iv::BLACK);
+            let steps = cstring("1. Подключи телефон к этому WiFi\n2. Открой адрес выше в браузере\n3. СТОП - остановить, ВЫХОД - выйти");
+            iv::DrawTextRect(GAP, y, w - 2 * GAP, 130, steps.as_ptr(), iv::ALIGN_LEFT);
+            y += 138;
+            // upload progress (file, percent, speed, bar)
+            if let Some(srv) = SERVER.get() {
+                let (line, pct) = srv.stats.upload_display();
+                if !line.is_empty() {
+                    iv::SetFont(f_body, iv::BLACK);
+                    let ul = cstring(&line);
+                    iv::DrawTextRect(GAP, y, w - 2 * GAP, 110, ul.as_ptr(), iv::ALIGN_LEFT);
+                    y += 112;
+                    if let Some(p) = pct {
+                        let bw = w - 2 * GAP;
+                        iv::DrawRect(GAP, y, bw, 30, iv::BLACK);
+                        let fill = (bw as u32 * p as u32 / 100) as i32;
+                        if fill > 4 {
+                            iv::FillArea(GAP + 2, y + 2, fill - 4, 26, iv::BLACK);
+                        }
+                        y += 38;
+                    }
+                }
+            }
+            // message line above buttons
+            let _ = y;
+            iv::SetFont(f_small, iv::BLACK);
+            let m = cstring(&state.message);
+            iv::DrawTextRect(
+                GAP,
+                h - BOTTOM_H - 52,
+                w - 2 * GAP,
+                48,
+                m.as_ptr(),
+                iv::ALIGN_LEFT,
+            );
         }
     }
 
@@ -177,12 +227,12 @@ mod device {
             let per = pb_ui::files_per_page(iv::ScreenHeight());
             for (i, e) in listing.iter().skip(state.files_page * per).take(per).enumerate() {
                 let gi = state.files_page * per + i;
-                let y = LIST_Y0 + 56 + (i as i32) * ROW_H;
+                let y = LIST_Y0 + (i as i32) * ROW_H;
                 if gi == state.selection {
                     iv::FillArea(GAP, y, w - 2 * GAP, ROW_H - 6, iv::LGRAY);
                 }
                 let mark = if gi == state.selection { "> " } else { "   " };
-                let ic = if e.is_dir { "[D] " } else { "[F] " };
+                let ic = if e.is_dir { "[Папка] " } else { "[Файл] " };
                 let line = cstring(&format!("{mark}{ic}{}", e.name));
                 iv::DrawTextRect(
                     GAP + 8,
@@ -194,10 +244,10 @@ mod device {
                 );
             }
             if listing.is_empty() {
-                let e = cstring("(empty folder)");
+                let e = cstring("(папка пуста)");
                 iv::DrawTextRect(
                     GAP,
-                    LIST_Y0 + 56,
+                    LIST_Y0,
                     w - 2 * GAP,
                     ROW_H,
                     e.as_ptr(),
@@ -222,16 +272,22 @@ mod device {
             .unwrap_or_default()
     }
 
-    fn log_text(state: &UiState) -> String {
-        let mut out = String::from("server log:\n");
-        for l in state.log_lines.iter().rev().take(12) {
-            out.push_str(l);
-            out.push('\n');
+    /// Log tab: recent HTTP requests from the running server.
+    fn log_text() -> String {
+        if let Some(srv) = SERVER.get() {
+            let tail = srv.stats.tail();
+            if tail.is_empty() {
+                return "Журнал пуст.\nОткрой адрес в браузере.".to_owned();
+            }
+            let mut out = String::from("Запросы:\n");
+            for l in tail.iter().rev().take(14) {
+                out.push_str(l);
+                out.push('\n');
+            }
+            out
+        } else {
+            "Сервер ещё не запускался.\nНажми СТАРТ.".to_owned()
         }
-        if out.len() < 20 {
-            out.push_str("(empty — start server, open URL)\n");
-        }
-        out
     }
 
     unsafe extern "C" fn handler(evt: i32, p1: i32, p2: i32) -> i32 {
@@ -251,7 +307,7 @@ mod device {
         match evt {
             x if x == iv::EVT_INIT => {
                 iv::SetPanelType(0);
-                s.message = "Press START".into();
+                s.message = "Нажми СТАРТ".into();
                 log_line("init ok");
                 draw(&s);
                 return 1;
@@ -272,7 +328,7 @@ mod device {
                     s.ip = ip;
                 }
                 if !s.server_on && !s.wifi_connecting {
-                    s.message = "WiFi connected. Press START.".into();
+                    s.message = "WiFi есть. Нажми СТАРТ.".into();
                 }
                 draw(&s);
                 return 1;
@@ -406,58 +462,56 @@ mod device {
         0
     }
 
-    /// Tap routing: bottom buttons -> top tabs -> file rows. True if handled.
+    /// Tap routing: bottom buttons -> file rows. True if handled.
+    /// (No top bar anymore — tabs switch via the ЭКРАН button / PREV/NEXT.)
     fn handle_tap(st: &Arc<Mutex<UiState>>, x: i32, y: i32) -> bool {
-        use pb_ui::{bottom_buttons, hit_button, row_at, HEADER_H};
+        use pb_ui::{bottom_buttons, hit_button, row_at};
         unsafe {
             let w = iv::ScreenWidth();
             let h = iv::ScreenHeight();
             let Ok(s) = st.lock() else { return false };
             let tab = s.tab;
+            let server_on = s.server_on;
             // 1) bottom buttons
-            let btns = bottom_buttons(tab, s.server_on, w, h);
+            let btns = bottom_buttons(tab, server_on, w, h);
             if let Some(id) = hit_button(&btns, x, y) {
                 drop(s);
                 match id {
-                    pb_ui::BtnId::StartStop => press_start(st),
+                    pb_ui::BtnId::Primary => {
+                        if server_on {
+                            stop_server(st);
+                        } else if tab == pb_ui::Tab::Files {
+                            if let Ok(mut s) = st.lock() {
+                                if let Some(par) =
+                                    pb_ui::UiState::parent_dir(&s.current_dir.clone())
+                                {
+                                    s.current_dir = par;
+                                    s.selection = 0;
+                                    s.files_page = 0;
+                                } else {
+                                    s.tab = pb_ui::Tab::Status;
+                                }
+                                draw(&s);
+                            }
+                        } else {
+                            press_start(st);
+                        }
+                    }
+                    pb_ui::BtnId::Tabs => {
+                        if let Ok(mut s) = st.lock() {
+                            s.next_tab();
+                            draw(&s);
+                        }
+                    }
                     pb_ui::BtnId::Exit => {
                         if let Ok(s) = st.lock() {
                             exit_app(&s);
                         }
                     }
-                    pb_ui::BtnId::Up => {
-                        if let Ok(mut s) = st.lock() {
-                            if let Some(par) =
-                                pb_ui::UiState::parent_dir(&s.current_dir.clone())
-                            {
-                                s.current_dir = par;
-                                s.selection = 0;
-                                s.files_page = 0;
-                            } else {
-                                s.tab = pb_ui::Tab::Status;
-                            }
-                            draw(&s);
-                        }
-                    }
                 }
                 return true;
             }
-            // 2) top tab bar
-            if y < HEADER_H {
-                drop(s);
-                if let Ok(mut s) = st.lock() {
-                    if x < w / 3 {
-                        s.tab = pb_ui::Tab::Status;
-                    } else if x < 2 * w / 3 {
-                        s.tab = pb_ui::Tab::Files;
-                    } else {
-                        s.tab = pb_ui::Tab::Log;
-                    }
-                    draw(&s);
-                }
-                return true;
-            }
-            // 3) file rows
+            // 2) file rows
             if tab == pb_ui::Tab::Files {
                 let per = pb_ui::files_per_page(h);
                 let total = file_count(&s.current_dir);
@@ -479,6 +533,21 @@ mod device {
         }
     }
 
+    /// STOP button: real shutdown (unblocks the accept loop, closes socket).
+    /// WiFi stays on so START works instantly afterwards.
+    fn stop_server(st: &Arc<Mutex<UiState>>) {
+        log_line("stop pressed");
+        if let Some(srv) = SERVER.get() {
+            srv.shutdown();
+        }
+        if let Ok(mut s) = st.lock() {
+            s.server_on = false;
+            s.wifi_connecting = false;
+            s.message = "Сервер остановлен".into();
+            draw(&s);
+        }
+    }
+
     /// START button / MENU / OK: wifi prompt, then async connect in worker.
     /// Runs on the GUI thread (DialogSynchro blocks here, never in worker).
     fn press_start(st: &Arc<Mutex<UiState>>) {
@@ -487,20 +556,20 @@ mod device {
             Err(_) => return,
         };
         if server_on {
-            set_msg(st, "server already running");
+            set_msg(st, "Сервер уже запущен");
             return;
         }
         if connecting {
-            set_msg(st, "already connecting, wait...");
+            set_msg(st, "Уже подключаюсь, подожди...");
             return;
         }
         let ans = unsafe {
             iv::DialogSynchro(
                 iv::ICON_QUESTION,
                 cstring("WiFi").as_ptr(),
-                cstring("Turn on WiFi and start the file server?").as_ptr(),
-                cstring("Yes").as_ptr(),
-                cstring("No").as_ptr(),
+                cstring("Включить WiFi и запустить сервер файлов?").as_ptr(),
+                cstring("Да").as_ptr(),
+                cstring("Нет").as_ptr(),
                 std::ptr::null(),
             )
         };
@@ -510,7 +579,7 @@ mod device {
         }
         if let Ok(mut s) = st.lock() {
             s.wifi_connecting = true;
-            s.message = "Starting...".into();
+            s.message = "Запуск...".into();
             draw(&s);
         }
         wifi_and_serve(st.clone());
@@ -576,7 +645,7 @@ mod device {
                 log_line(&format!("worker start: {}", net_dump()));
                 if !online() {
                     // 1) silent attempt: no dialogs, quick
-                    set_msg(&st2, "Connecting to WiFi...");
+                    set_msg(&st2, "Подключение к WiFi...");
                     match iv::net_connect_silent() {
                         Some(rc) => log_line(&format!("worker: silent rc={rc}")),
                         None => log_line("worker: NetConnectSilent missing"),
@@ -591,7 +660,7 @@ mod device {
                         Some(rc) => log_line(&format!("worker: async started rc={rc}")),
                         None => {
                             log_line("worker: NetConnectAsync missing!");
-                            set_msg(&st2, "No async WiFi API. Connect in Settings, then START.");
+                            set_msg(&st2, "Нет WiFi. Подключись в настройках и нажми СТАРТ.");
                             finish_connecting(&st2);
                             return;
                         }
@@ -605,24 +674,28 @@ mod device {
                             break;
                         }
                         if waited % 4 == 0 {
-                            set_msg(&st2, &format!("Connecting to WiFi... {}s", waited / 2));
+                            set_msg(&st2, &format!("Подключение к WiFi... {}с", waited / 2));
                         }
                         if waited >= 90 {
                             log_line(&format!("worker: wifi timeout: {}", net_dump()));
                             set_msg(
                                 &st2,
-                                "WiFi timeout. Connect in Settings, then press START.",
+                                "Нет WiFi. Подключись в настройках и нажми СТАРТ.",
                             );
                             finish_connecting(&st2);
                             return;
                         }
                     }
                 }
-                // online: publish state, bind, serve (blocking)
+                // online: publish state, bind, serve (blocking until STOP/exit)
                 let ip = crate::primary_ip().unwrap_or_else(|| "?".into());
                 let roots = Roots::device_defaults();
-                let srv = Server::new(roots);
-                match srv.bind(8080) {
+                let srv = Arc::new(Server::new(roots));
+                // progress hook: redraw the device screen as bytes arrive
+                srv.stats
+                    .set_hook(Arc::new(|| request_redraw()));
+                let _ = SERVER.set(srv.clone());
+                match srv.bind_shared(8080) {
                     Ok((http, port)) => {
                         log_line(&format!("worker: listening {ip}:{port}"));
                         if let Ok(mut s) = st2.lock() {
@@ -632,22 +705,31 @@ mod device {
                             s.wifi_connecting = false;
                             s.ip = ip;
                             s.port = port;
-                            s.message = "server running".into();
+                            s.message = "Сервер запущен".into();
                         }
                         request_redraw();
-                        srv.run_on(http); // blocks until process exit
+                        srv.run_shared(&http); // blocks until shutdown()/exit
                         log_line("worker: serve loop ended");
+                        // stopped via СТОП (or socket died): back to idle
+                        if let Ok(mut s) = st2.lock() {
+                            s.server_on = false;
+                            s.wifi_connecting = false;
+                            if s.message == "Сервер запущен" {
+                                s.message = "Сервер остановлен".into();
+                            }
+                        }
+                        request_redraw();
                     }
                     Err(e) => {
                         log_line(&format!("worker: bind failed: {e}"));
-                        set_msg(&st2, &format!("bind failed: {e}"));
+                        set_msg(&st2, &format!("Ошибка запуска: {e}"));
                     }
                 }
                 finish_connecting(&st2);
             });
         if let Err(e) = spawn {
             log_line(&format!("thread spawn failed: {e}"));
-            set_msg(&st, &format!("thread failed: {e}"));
+            set_msg(&st, &format!("Ошибка потока: {e}"));
             finish_connecting(&st);
         }
     }
@@ -664,7 +746,7 @@ mod device {
         std::panic::set_hook(Box::new(|info| {
             log_line(&format!("PANIC: {info}"));
         }));
-        log_line("pbweb 0.1.2 starting");
+        log_line("pbweb 0.2.0 starting");
         let _ = HANDLER_FN.set(handler);
         let state = Arc::new(Mutex::new(UiState::default()));
         let _ = STATE.set(state);

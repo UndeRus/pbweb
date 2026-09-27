@@ -411,8 +411,8 @@ extern "C" {
     fn freeifaddrs(ifa: *mut IfAddrs);
 }
 
-/// Real device LAN IP. Prefers wlan* interfaces, falls back to the first
-/// non-loopback IPv4. Works on host Linux and on the reader (libc only).
+/// Real device LAN IP. Prefers wlan*, then eth* (PocketBook wifi is eth0),
+/// then the first non-loopback IPv4. Works on host Linux and on the reader.
 #[cfg(target_os = "linux")]
 pub fn lan_ip() -> Option<String> {
     unsafe {
@@ -420,6 +420,7 @@ pub fn lan_ip() -> Option<String> {
         if getifaddrs(&mut head) != 0 || head.is_null() {
             return None;
         }
+        let mut eth: Option<String> = None;
         let mut fallback: Option<String> = None;
         let mut cur = head;
         while !cur.is_null() {
@@ -433,7 +434,9 @@ pub fn lan_ip() -> Option<String> {
                         freeifaddrs(head);
                         return Some(s);
                     }
-                    if fallback.is_none() {
+                    if name.starts_with("eth") && eth.is_none() {
+                        eth = Some(s);
+                    } else if fallback.is_none() {
                         fallback = Some(s);
                     }
                 }
@@ -441,7 +444,7 @@ pub fn lan_ip() -> Option<String> {
             cur = (*cur).next;
         }
         freeifaddrs(head);
-        fallback
+        eth.or(fallback)
     }
 }
 

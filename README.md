@@ -39,19 +39,41 @@ podman run --rm -v ${PWD}:/work -w /work pbweb-sdk sh build-pocketbook.sh
 # -> target/pbweb.app  (copy to /mnt/ext1/applications/pbweb.app on reader)
 ```
 
-Device run: open `pbweb.app` from apps list → big START button (or MENU key)
-→ Yes in the WiFi prompt → non-blocking connect (45s cap, countdown on screen)
-→ URL in huge type. All actions are big touch buttons: START/STOP, UP, EXIT,
-top tab bar; tapping a file row opens the folder.
+## Install on reader (+ icon)
 
-WiFi details: `NetConnectSilent` first (no dialogs), then `NetConnectAsync` +
-`NetInfo` polling, `EVT_NET_CONNECTED` handling, real IP via `getifaddrs`.
-Online = `NetInfo()->connected` only (`QueryNetwork()` semantics are undocumented).
-Touch: `POINTERDOWN`/`TOUCHDOWN` (47/48/49) with x/y from event params,
-PocketPuzzles-style (no `GetTouchInfo` indirection; 6.5 lib only has `GetTouchInfoI`).
-No blocking `NetConnect*` calls — the UI never hangs.
+1. Copy `target/pbweb.app` → `/mnt/ext1/applications/pbweb.app`.
+2. Copy icons (8-bit BMP, e-ink style: WiFi + open book):
+   `assets/pbweb.bmp` → `/mnt/ext1/applications/icons/pbweb.bmp`,
+   `assets/pbweb_f.bmp` → `/mnt/ext1/applications/icons/pbweb_f.bmp`
+   (the `_f` one is the tapped/inverted state).
+3. Optional launcher entry — in `/system/config/desktop/view.json` add:
+   `"U_pbweb": { "path": "/mnt/ext1/applications/pbweb.app", "title": "PBWeb",
+   "icon": "/mnt/ext1/applications/icons/pbweb.bmp",
+   "focused_icon": "/mnt/ext1/applications/icons/pbweb_f.bmp" },`
+   and add `"U_pbweb"` to a group. Reboot/unplug to refresh.
+   Regenerate icons anytime: `python assets/make_icons.py`.
 
-Stop with the EXIT button or BACK: sync + library nudge + exit.
+![PBWeb icon](assets/pbweb-preview.png)
+
+Device run: open `pbweb.app` → big СТАРТ button (or MENU key) → Yes in the
+WiFi prompt → non-blocking connect (silent first, then async, 45s cap with
+countdown) → huge URL + steps on screen. All in Russian, all actions are big
+touch buttons: СТАРТ/СТОП, ЭКРАН (cycle tabs), ВЫХОД; tapping a file row opens it.
+
+- СТОП really stops the server (socket closed, accept loop unblocked) — WiFi
+  stays on, СТАРТ works again instantly.
+- Upload progress on the reader screen: file name, percent, speed (МБ/с),
+  progress bar; finished uploads stay as "✓ name (size)" until the next one.
+- Log tab shows recent HTTP requests served.
+- No top status bar; no blocking `NetConnect*` calls — the UI never hangs.
+
+WiFi details: online = `NetInfo()->connected` only; `NetConnectSilent` then
+`NetConnectAsync` + poll; `EVT_NET_CONNECTED` handling; real IP via `getifaddrs`
+(wlan* > eth* > any). Touch: `POINTERDOWN`/`TOUCHDOWN` (47/48/49) with x/y from
+event params, PocketPuzzles-style (no `GetTouchInfo` indirection; 6.5 lib only
+has `GetTouchInfoI`).
+
+Stop with the ВЫХОД button or BACK: sync + library nudge + exit.
 
 Diagnostics: the app appends to `/mnt/ext1/pbweb.log` (startup, key/touch codes,
 WiFi steps, panics). If something crashes, send this file — it tells exactly where.

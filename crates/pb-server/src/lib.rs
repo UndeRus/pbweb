@@ -15,17 +15,65 @@
 use pb_core::{list_dir, resolve_safe, Roots};
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
 
 static INDEX_HTML: &str = include_str!("../../../web/index.html");
 
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Human size: 850 -> "850 Б", 2048 -> "2,0 КБ", 5M -> "5,0 МБ".
+pub fn format_size(n: u64) -> String {
+    let s = if n >= 1 << 30 {
+        format!("{:.1} ГБ", n as f64 / (1 << 30) as f64)
+    } else if n >= 1 << 20 {
+        format!("{:.1} МБ", n as f64 / (1 << 20) as f64)
+    } else if n >= 1 << 10 {
+        format!("{:.1} КБ", n as f64 / 1024.0)
+    } else {
+        return format!("{n} Б");
+    };
+    s.replace('.', ",")
+}
+
 #[derive(Debug, Default)]
+pub struct UploadState {
+    pub file: Mutex<String>,
+    pub received: AtomicU64,
+    pub total: AtomicU64,
+    pub started_ms: AtomicU64,
+    pub done_msg: Mutex<String>,
+    pub active: AtomicBool,
+    last_hook_ms: AtomicU64,
+}
+
+impl UploadState {
+    fn start(&self, total: u64) {
+        *self.file.lock().unwrap() = String::new();
+        self.received.store(0, Ordering::Relaxed);
+        self.total.store(total, Ordering::Relaxed);
+        self.started_ms.store(now_ms(), Ordering::Relaxed);
+        *self.done_msg.lock().unwrap() = String::new();
+        self.active.store(true, Ordering::Relaxed);
+    }
+    fn reset(&self) {
+        self.active.store(false, Ordering::Relaxed);
+    }
+}
+
+#[derive(Default)]
 pub struct Stats {
     pub requests: AtomicU64,
     pub uploaded_bytes: AtomicU64,
     pub log: Mutex<Vec<String>>,
+    pub upload: UploadState,
+    pub hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl Stats {
@@ -40,11 +88,67 @@ impl Stats {
     pub fn tail(&self) -> Vec<String> {
         self.log.lock().unwrap().clone()
     }
+    /// Redraw/progress callback (set by the device UI). Throttled to 2/sec.
+    pub fn set_hook(&self, f: Arc<dyn Fn() + Send + Sync>) {
+        *self.hook.lock().unwrap() = Some(f);
+    }
+    pub fn fire_hook(&self) {
+        let now = now_ms();
+        let last = self.upload.last_hook_ms.load(Ordering::Relaxed);
+        if now.wrapping_sub(last) < 500 {
+            return;
+        }
+        self.upload.last_hook_ms.store(now, Ordering::Relaxed);
+        if let Some(h) = self.hook.lock().unwrap().clone() {
+            (h)();
+        }
+    }
+    /// (active, file, received, total, started_ms, done_msg)
+    pub fn upload_snapshot(&self) -> (bool, String, u64, u64, u64, String) {
+        let u = &self.upload;
+        (
+            u.active.load(Ordering::Relaxed),
+            u.file.lock().unwrap().clone(),
+            u.received.load(Ordering::Relaxed),
+            u.total.load(Ordering::Relaxed),
+            u.started_ms.load(Ordering::Relaxed),
+            u.done_msg.lock().unwrap().clone(),
+        )
+    }
+    /// Ready-to-draw upload line + percent (None when total unknown or idle).
+    /// Active: "↑ name\n45% • 2,4 МБ/с". Done: "✓ names (size)". Idle: "".
+    pub fn upload_display(&self) -> (String, Option<u8>) {
+        let (active, file, rec, tot, started, done) = self.upload_snapshot();
+        if active {
+            let pct = if tot > 0 {
+                Some((rec.saturating_mul(100) / tot).min(100) as u8)
+            } else {
+                None
+            };
+            let el = (now_ms().saturating_sub(started).max(200) as f64) / 1000.0;
+            let speed = format_size((rec as f64 / el) as u64);
+            let name = if file.is_empty() {
+                "данные".to_string()
+            } else {
+                file
+            };
+            let line = match pct {
+                Some(p) => format!("↑ {name}\n{p}% • {speed}/с"),
+                None => format!("↑ {name}\n{} • {speed}/с", format_size(rec)),
+            };
+            (line, pct)
+        } else if !done.is_empty() {
+            (done, None)
+        } else {
+            (String::new(), None)
+        }
+    }
 }
 
 pub struct Server {
     pub roots: Roots,
     pub stats: Arc<Stats>,
+    live: Mutex<Option<Arc<tiny_http::Server>>>,
 }
 
 impl Server {
@@ -52,13 +156,39 @@ impl Server {
         Self {
             roots,
             stats: Arc::new(Stats::default()),
+            live: Mutex::new(None),
         }
     }
 
     pub fn serve(&self, port: u16) -> Result<u16, Box<dyn std::error::Error + Send + Sync>> {
-        let (srv, p) = self.bind(port)?;
-        self.run_on(srv);
+        let (srv, p) = self.bind_shared(port)?;
+        self.run_shared(&srv);
         Ok(p)
+    }
+
+    /// Bind the first free port in port..port+10 without serving yet, so the
+    /// caller can publish the URL before blocking in the accept loop.
+    /// The handle is kept for shutdown().
+    pub fn bind_shared(
+        &self,
+        port: u16,
+    ) -> Result<(Arc<tiny_http::Server>, u16), Box<dyn std::error::Error + Send + Sync>> {
+        for p in port..port + 10 {
+            match tiny_http::Server::http(format!("0.0.0.0:{p}")) {
+                Ok(srv) => {
+                    let shared = Arc::new(srv);
+                    *self.live.lock().unwrap() = Some(shared.clone());
+                    return Ok((shared, p));
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    if !msg.contains("in use") && !msg.contains("address") {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        Err("no free port".into())
     }
 
     /// Bind the first free port in port..port+10 without serving yet, so the
@@ -67,6 +197,7 @@ impl Server {
         &self,
         port: u16,
     ) -> Result<(tiny_http::Server, u16), Box<dyn std::error::Error + Send + Sync>> {
+        // kept for API compat; prefer bind_shared (supports shutdown)
         for p in port..port + 10 {
             match tiny_http::Server::http(format!("0.0.0.0:{p}")) {
                 Ok(srv) => return Ok((srv, p)),
@@ -84,6 +215,52 @@ impl Server {
     /// Blocking accept loop for an already-bound server.
     pub fn run_on(&self, srv: tiny_http::Server) {
         self.run(srv)
+    }
+
+    /// Blocking accept loop for a shared server. Ends when shutdown() is
+    /// called (tiny_http unblocks the waiter internally).
+    pub fn run_shared(&self, srv: &Arc<tiny_http::Server>) {
+        for mut req in srv.incoming_requests() {
+            let url = req.url().to_owned();
+            let method = req.method().as_str().to_owned();
+            self.stats.push(format!("{method} {url}"));
+            let resp = self.route(&mut req, &method, &url);
+            let _ = req.respond(resp);
+        }
+        *self.live.lock().unwrap() = None;
+    }
+
+    /// Stop a running server: unblocks the accept loop and closes the socket.
+    /// Safe to call from another thread (e.g. a STOP button handler).
+    pub fn shutdown(&self) {
+        use std::time::Duration;
+        let handle = self.live.lock().unwrap().take();
+        if let Some(srv) = handle {
+            let addr = srv.server_addr();
+            srv.unblock(); // end our message loop
+            drop(srv); // close=true; Drop's own self-wake fails on Windows,
+            // so wake the accept thread ourselves via loopback (always works):
+            // it then sees close=true, exits and releases the port.
+            match addr {
+                tiny_http::ListenAddr::IP(listen) => {
+                    let loopback = std::net::SocketAddr::new(
+                        std::net::IpAddr::from([127, 0, 0, 1]),
+                        listen.port(),
+                    );
+                    if let Ok(s) =
+                        std::net::TcpStream::connect_timeout(&loopback, Duration::from_secs(2))
+                    {
+                        let _ = s.shutdown(std::net::Shutdown::Both);
+                    }
+                }
+                #[cfg(unix)]
+                _ => {}
+            }
+        }
+    }
+
+    pub fn is_live(&self) -> bool {
+        self.live.lock().unwrap().is_some()
     }
 
     fn run(&self, srv: tiny_http::Server) {
@@ -351,13 +528,8 @@ impl Server {
                 if !full.is_dir() {
                     return err(400, "target not a dir");
                 }
-                match save_multipart(req, &full) {
-                    Ok(n) => {
-                        self.stats
-                            .uploaded_bytes
-                            .fetch_add(n, Ordering::Relaxed);
-                        json(serde_json::json!({"ok": true, "bytes": n}))
-                    }
+                match save_multipart(&self.stats, req, &full) {
+                    Ok(n) => json(serde_json::json!({"ok": true, "bytes": n})),
                     Err(e) => err(500, &e),
                 }
             }
@@ -408,15 +580,27 @@ fn download_file(full: &PathBuf) -> tiny_http::Response<std::io::Cursor<Vec<u8>>
 
 /// Minimal multipart/form-data parser (std only): extracts each file part
 /// by boundary and writes `filename` into `dir`. Guards filename to basename.
+/// Reads the body in chunks so upload progress (bytes/speed) stays live.
 fn save_multipart(
+    stats: &Arc<Stats>,
     req: &mut tiny_http::Request,
     dir: &std::path::Path,
 ) -> Result<u64, String> {
-    let ctype = req
+    const CAP: usize = 512 * 1024 * 1024;
+    let headers: Vec<(String, String)> = req
         .headers()
         .iter()
-        .find(|h| h.field.as_str().to_ascii_lowercase() == "content-type")
-        .map(|h| h.value.as_str().to_owned())
+        .map(|h| {
+            (
+                h.field.as_str().to_string().to_ascii_lowercase(),
+                h.value.as_str().to_owned(),
+            )
+        })
+        .collect();
+    let ctype = headers
+        .iter()
+        .find(|(k, _)| k == "content-type")
+        .map(|(_, v)| v.clone())
         .unwrap_or_default();
     let boundary = ctype
         .split("boundary=")
@@ -425,59 +609,138 @@ fn save_multipart(
         .trim()
         .trim_matches('"')
         .to_owned();
+    let total = headers
+        .iter()
+        .find(|(k, _)| k == "content-length")
+        .and_then(|(_, v)| v.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+
+    stats.upload.start(total);
+    stats.fire_hook();
     let mut body = Vec::new();
-    req.as_reader()
-        .read_to_end(&mut body)
-        .map_err(|e| e.to_string())?;
-    if body.len() > 512 * 1024 * 1024 {
-        return Err("file too large (512MB cap)".into());
+    let mut buf = vec![0u8; 32 * 1024];
+    let mut named = false;
+    let reader = req.as_reader();
+    loop {
+        let n = reader.read(&mut buf).map_err(|e| {
+            stats.upload.reset();
+            e.to_string()
+        })?;
+        if n == 0 {
+            break;
+        }
+        body.extend_from_slice(&buf[..n]);
+        if body.len() > CAP {
+            stats.upload.reset();
+            return Err("file too large (512MB cap)".into());
+        }
+        stats.upload.received.fetch_add(n as u64, Ordering::Relaxed);
+        // filename usually arrives in the first chunk — show it live
+        if !named && body.len() > 512 {
+            if let Some(nm) = first_filename(&body) {
+                *stats.upload.file.lock().unwrap() = nm;
+                named = true;
+            }
+        }
+        stats.fire_hook();
     }
     let marker = format!("--{boundary}").into_bytes();
-    let mut total = 0u64;
+    let mut total_written = 0u64;
     // split by boundary; each chunk: headers \r\n\r\n data \r\n
     let parts = split_bytes(&body, &marker);
     if parts.len() < 2 {
+        stats.upload.reset();
         return Err("bad multipart body".into());
     }
+    let mut names: Vec<String> = Vec::new();
     for part in parts {
         if part.starts_with(b"--") || part.len() < 4 {
             continue;
         }
         let sep = b"\r\n\r\n";
-        let idx = find_bytes(part, sep).ok_or("bad part headers")?;
+        let idx = find_bytes(part, sep).ok_or_else(|| {
+            stats.upload.reset();
+            "bad part headers".to_string()
+        })?;
         let (hraw, mut data) = part.split_at(idx);
         data = &data[sep.len()..];
         // strip trailing \r\n
         if data.ends_with(b"\r\n") {
             data = &data[..data.len() - 2];
         }
-        let hstr = String::from_utf8_lossy(hraw);
-        let fname = hstr
-            .lines()
-            .find(|l| l.to_ascii_lowercase().contains("content-disposition"))
-            .and_then(|l| {
-                l.split("filename*=")
-                    .nth(1)
-                    .map(|s| s.trim().trim_matches('"').to_owned())
-                    .or_else(|| {
-                        l.split("filename=")
-                            .nth(1)
-                            .map(|s| s.trim().trim_matches('"').trim().to_owned())
-                    })
-            })
-            .unwrap_or_default();
-        let fname = fname.rsplit(['/', '\\']).next().unwrap_or("").trim();
+        let fname = part_filename(hraw).unwrap_or_default();
         if fname.is_empty() || fname == "." || fname == ".." {
             continue;
         }
-        let dest = dir.join(fname);
-        std::fs::write(&dest, data).map_err(|e| e.to_string())?;
-        total += data.len() as u64;
+        let dest = dir.join(&fname);
+        std::fs::write(&dest, data).map_err(|e| {
+            stats.upload.reset();
+            e.to_string()
+        })?;
+        names.push(fname);
+        total_written += data.len() as u64;
     }
-    if total == 0 {
+    if total_written == 0 {
+        stats.upload.reset();
         return Err("no files found".into());
     }
-    Ok(total)
+    stats
+        .uploaded_bytes
+        .fetch_add(total_written, Ordering::Relaxed);
+    let shown = if names.len() <= 3 {
+        names.join(", ")
+    } else {
+        format!("{} files", names.len())
+    };
+    *stats.upload.file.lock().unwrap() = shown.clone();
+    *stats.upload.done_msg.lock().unwrap() =
+        format!("{} ({})", shown, format_size(total_written));
+    stats.upload.reset();
+    stats.fire_hook();
+    Ok(total_written)
+}
+
+/// filename="..." from a disposition header block (basename only).
+fn part_filename(hraw: &[u8]) -> Option<String> {
+    let hstr = String::from_utf8_lossy(hraw);
+    let line = hstr
+        .lines()
+        .find(|l| l.to_ascii_lowercase().contains("content-disposition"))?;
+    let raw = line
+        .split("filename*=")
+        .nth(1)
+        .map(|s| s.trim().trim_matches('"').to_owned())
+        .or_else(|| {
+            line.split("filename=")
+                .nth(1)
+                .map(|s| s.trim().trim_matches('"').trim().to_owned())
+        })?;
+    let base = raw.rsplit(['/', '\\']).next().unwrap_or("").trim();
+    if base.is_empty() || base == "." || base == ".." {
+        return None;
+    }
+    Some(base.to_owned())
+}
+
+/// First filename found anywhere in (partial) body — for live progress label.
+fn first_filename(body: &[u8]) -> Option<String> {
+    let key = b"filename=";
+    let i = find_bytes(body, key)?;
+    let mut rest = &body[i + key.len()..];
+    // value is usually quoted: filename="z.pdf"
+    if rest.first() == Some(&b'"') {
+        rest = &rest[1..];
+    }
+    let end = rest
+        .iter()
+        .position(|&c| c == b'"' || c == b'\r' || c == b'\n' || c == b';')
+        .unwrap_or(rest.len().min(128));
+    let s = String::from_utf8_lossy(&rest[..end]).into_owned();
+    let base = s.rsplit(['/', '\\']).next().unwrap_or("").trim();
+    if base.is_empty() || base == "." || base == ".." {
+        return None;
+    }
+    Some(base.to_owned())
 }
 
 fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -597,5 +860,79 @@ fn zip_dir(dir: &std::path::Path) -> Result<Vec<u8>, String> {
         zw.finish().map_err(|e| e.to_string())?;
     }
     Ok(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fmt_sizes() {
+        assert_eq!(format_size(0), "0 Б");
+        assert_eq!(format_size(999), "999 Б");
+        assert_eq!(format_size(2048), "2,0 КБ");
+        assert_eq!(format_size(5 * 1024 * 1024), "5,0 МБ");
+    }
+
+    #[test]
+    fn filenames_parsed() {
+        let h = b"Content-Disposition: form-data; name=\"files\"; filename=\"C:\\books\\a.epub\"\r\nContent-Type: x";
+        assert_eq!(part_filename(h).as_deref(), Some("a.epub"));
+        assert_eq!(
+            first_filename(b"--b\r\nContent-Disposition: form-data; filename=\"z.pdf\"\r\n\r\ndata"),
+            Some("z.pdf".to_string())
+        );
+        assert_eq!(first_filename(b"nope"), None);
+    }
+
+    #[test]
+    fn shutdown_unblocks_loop() {
+        let dir = std::env::temp_dir().join(format!(
+            "pbweb-shutdown-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let srv = Arc::new(Server::new(Roots {
+            internal: dir.clone(),
+            sdcard: None,
+        }));
+        let (handle, _port) = srv.bind_shared(18080).expect("bind");
+        assert!(srv.is_live());
+        let worker = {
+            let srv = srv.clone();
+            std::thread::spawn(move || srv.run_shared(&handle))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        srv.shutdown();
+        assert!(!srv.is_live());
+        let mut done = false;
+        for _ in 0..50 {
+            if worker.is_finished() {
+                done = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        assert!(done, "accept loop did not stop after shutdown");
+        let _ = worker.join();
+        // re-bind works after shutdown (STOP -> START cycle). tiny_http's
+        // internal accept thread needs a moment to release the socket.
+        let mut bound = false;
+        for _ in 0..50 {
+            match srv.bind_shared(18080) {
+                Ok(_) => {
+                    bound = true;
+                    break;
+                }
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            }
+        }
+        assert!(bound, "re-bind failed after shutdown");
+        srv.shutdown();
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
 
