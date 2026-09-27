@@ -746,7 +746,7 @@ mod device {
         std::panic::set_hook(Box::new(|info| {
             log_line(&format!("PANIC: {info}"));
         }));
-        log_line("pbweb 0.2.0 starting");
+        log_line("pbweb 0.2.3 starting");
         let _ = HANDLER_FN.set(handler);
         let state = Arc::new(Mutex::new(UiState::default()));
         let _ = STATE.set(state);

@@ -73,7 +73,9 @@ WiFi details: online = `NetInfo()->connected` only; `NetConnectSilent` then
 event params, PocketPuzzles-style (no `GetTouchInfo` indirection; 6.5 lib only
 has `GetTouchInfoI`).
 
-Stop with the ВЫХОД button or BACK: sync + library nudge + exit.
+Stop with the ВЫХОД button or BACK: fs sync + exit.
+New books land as files immediately; Library metadata (title/author/cover)
+is indexed by the firmware on its own schedule — open Library to refresh.
 
 Diagnostics: the app appends to `/mnt/ext1/pbweb.log` (startup, key/touch codes,
 WiFi steps, panics). If something crashes, send this file — it tells exactly where.

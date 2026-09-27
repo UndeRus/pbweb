@@ -23,7 +23,12 @@ pub const EVT_POINTERMOVE: c_int = 31;
 pub const EVT_TOUCHUP: c_int = 47;
 pub const EVT_TOUCHDOWN: c_int = 48;
 pub const EVT_TOUCHMOVE: c_int = 49;
-pub const EVT_FSCHANGED: c_int = 72;
+// Filesystem notifications (FW 6.x header). NOTE: 72 is EVT_FSINCOMING,
+// 73 is EVT_FSCHANGED — don't mix them up.
+pub const EVT_FSINCOMING: c_int = 72;
+pub const EVT_FSCHANGED: c_int = 73;
+// Library scan service events.
+pub const EVT_STARTSCAN: c_int = 215;
 
 pub const KEY_PREV: c_int = 0x18;
 pub const KEY_NEXT: c_int = 0x19;

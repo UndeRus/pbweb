@@ -103,6 +103,12 @@ impl Stats {
             (h)();
         }
     }
+    /// Unthrottled redraw (upload start/finish — otherwise the final state
+    /// can be swallowed by the throttle and the screen sticks mid-progress).
+    pub fn fire_hook_forced(&self) {
+        self.upload.last_hook_ms.store(0, Ordering::Relaxed);
+        self.fire_hook();
+    }
     /// (active, file, received, total, started_ms, done_msg)
     pub fn upload_snapshot(&self) -> (bool, String, u64, u64, u64, String) {
         let u = &self.upload;
@@ -616,7 +622,7 @@ fn save_multipart(
         .unwrap_or(0);
 
     stats.upload.start(total);
-    stats.fire_hook();
+    stats.fire_hook_forced();
     let mut body = Vec::new();
     let mut buf = vec![0u8; 32 * 1024];
     let mut named = false;
@@ -696,7 +702,7 @@ fn save_multipart(
     *stats.upload.done_msg.lock().unwrap() =
         format!("{} ({})", shown, format_size(total_written));
     stats.upload.reset();
-    stats.fire_hook();
+    stats.fire_hook_forced();
     Ok(total_written)
 }
 
