@@ -126,6 +126,7 @@ mod device {
     }
 
     /// Status tab: state, huge URL, wifi, steps, upload progress, message.
+    /// (QR block lives in draw_qr below.)
     fn draw_status(
         f_small: *mut std::os::raw::c_void,
         f_body: *mut std::os::raw::c_void,
@@ -181,10 +182,15 @@ mod device {
             let wl = cstring(&wifi);
             iv::DrawTextRect(GAP, y, w - 2 * GAP, 54, wl.as_ptr(), iv::ALIGN_LEFT);
             y += 62;
-            iv::SetFont(f_small, iv::BLACK);
-            let steps = cstring("1. Подключи телефон к этому WiFi\n2. Открой адрес выше в браузере\n3. СТОП - остановить, ВЫХОД - выйти");
-            iv::DrawTextRect(GAP, y, w - 2 * GAP, 130, steps.as_ptr(), iv::ALIGN_LEFT);
-            y += 138;
+            if state.server_on && usable_ip(&state.ip) {
+                // QR under the link while serving; steps would not fit
+                y = draw_qr(f_small, &state.url(), w, h, y);
+            } else {
+                iv::SetFont(f_small, iv::BLACK);
+                let steps = cstring("1. Подключи телефон к этому WiFi\n2. Открой адрес выше в браузере\n3. СТОП - остановить, ВЫХОД - выйти");
+                iv::DrawTextRect(GAP, y, w - 2 * GAP, 130, steps.as_ptr(), iv::ALIGN_LEFT);
+                y += 138;
+            }
             // upload progress (file, percent, speed, bar)
             if let Some(srv) = SERVER.get() {
                 let (line, pct) = srv.stats.upload_display();
@@ -216,6 +222,57 @@ mod device {
                 m.as_ptr(),
                 iv::ALIGN_LEFT,
             );
+        }
+    }
+
+    /// IP is usable for a QR/link when it looks like a real address.
+    fn usable_ip(ip: &str) -> bool {
+        !(ip.is_empty() || ip == "?" || ip == "-") && ip.contains('.')
+    }
+
+    /// QR code of the server URL right under the link, with a spec quiet
+    /// zone plus white backdrop so phone cameras lock on. Returns y below
+    /// the block. Skipped silently when the URL has no usable IP or the
+    /// code doesn't fit the remaining space.
+    fn draw_qr(
+        f_small: *mut std::os::raw::c_void,
+        url: &str,
+        w: i32,
+        h: i32,
+        y: i32,
+    ) -> i32 {
+        use pb_ui::{qr_layout, BOTTOM_H, GAP, QR_QUIET};
+        unsafe {
+            let Ok(code) = qrcode::QrCode::new(url.as_bytes()) else {
+                return y;
+            };
+            let modules = code.width() as i32;
+            // reserve room for the hint line + upload block + message
+            let max_h = h - BOTTOM_H - 260 - y;
+            let Some(l) = qr_layout(modules, w - 2 * GAP, max_h) else {
+                return y;
+            };
+            let x0 = (w - l.size_px) / 2;
+            iv::FillArea(x0, y, l.size_px, l.size_px, iv::WHITE);
+            for my in 0..modules {
+                for mx in 0..modules {
+                    if matches!(code[(mx as usize, my as usize)], qrcode::Color::Dark) {
+                        iv::FillArea(
+                            x0 + (QR_QUIET + mx) * l.scale,
+                            y + (QR_QUIET + my) * l.scale,
+                            l.scale,
+                            l.scale,
+                            iv::BLACK,
+                        );
+                    }
+                }
+            }
+            let mut ny = y + l.size_px + 8;
+            iv::SetFont(f_small, iv::BLACK);
+            let hint = cstring("Отсканируй камерой телефона");
+            iv::DrawTextRect(GAP, ny, w - 2 * GAP, 44, hint.as_ptr(), iv::ALIGN_CENTER);
+            ny += 52;
+            ny
         }
     }
 
@@ -746,7 +803,7 @@ mod device {
         std::panic::set_hook(Box::new(|info| {
             log_line(&format!("PANIC: {info}"));
         }));
-        log_line("pbweb 0.2.3 starting");
+        log_line("pbweb 0.2.4 starting");
         let _ = HANDLER_FN.set(handler);
         let state = Arc::new(Mutex::new(UiState::default()));
         let _ = STATE.set(state);
@@ -814,5 +871,17 @@ fn main() {
         let srv = Server::new(roots);
         println!("host dev server: see http://127.0.0.1:8080");
         let _ = srv.serve(8080);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn qr_encodes_typical_url() {
+        // device URL must fit a scannable code (v1..v5 => 21..37 modules)
+        let code = qrcode::QrCode::new(b"http://192.168.88.84:8080").unwrap();
+        assert!((21..=41).contains(&(code.width() as i32)));
+        // finder pattern corner is dark
+        assert!(matches!(code[(0, 0)], qrcode::Color::Dark));
     }
 }

@@ -57,8 +57,10 @@ podman run --rm -v ${PWD}:/work -w /work pbweb-sdk sh build-pocketbook.sh
 
 Device run: open `pbweb.app` → big СТАРТ button (or MENU key) → Yes in the
 WiFi prompt → non-blocking connect (silent first, then async, 45s cap with
-countdown) → huge URL + steps on screen. All in Russian, all actions are big
-touch buttons: СТАРТ/СТОП, ЭКРАН (cycle tabs), ВЫХОД; tapping a file row opens it.
+countdown) → huge URL + QR code underneath (scan with phone camera to open
+the upload page), + steps on screen when idle. All in Russian, all actions are
+big touch buttons: СТАРТ/СТОП, ЭКРАН (cycle tabs), ВЫХОД; tapping a file row
+opens it.
 
 - СТОП really stops the server (socket closed, accept loop unblocked) — WiFi
   stays on, СТАРТ works again instantly.

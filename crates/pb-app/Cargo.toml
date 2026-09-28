@@ -1,6 +1,6 @@
 [package]
 name = "pbweb-app"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 
 [[bin]]
@@ -16,3 +16,4 @@ pb-sys = { path = "../pb-sys" }
 pb-core = { path = "../pb-core" }
 pb-server = { path = "../pb-server" }
 pb-ui = { path = "../pb-ui" }
+qrcode = { version = "0.14", default-features = false }

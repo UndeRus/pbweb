@@ -185,6 +185,40 @@ pub fn hit_button(btns: &[Btn], x: i32, y: i32) -> Option<BtnId> {
         .map(|b| b.id)
 }
 
+// ---- QR code layout (server URL on the status screen) ----
+
+/// Modules of quiet zone around the code (spec minimum is 4).
+pub const QR_QUIET: i32 = 4;
+/// Max module size in px — bigger is not more readable, just taller.
+pub const QR_MAX_SCALE: i32 = 10;
+/// Min module size in px for reliable phone scanning.
+pub const QR_MIN_SCALE: i32 = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QrLayout {
+    /// px per module
+    pub scale: i32,
+    /// full side in px, quiet zone included
+    pub size_px: i32,
+}
+
+/// Fit a `modules x modules` QR code into a max_w/max_h box.
+/// Returns None when even the minimum readable size doesn't fit.
+pub fn qr_layout(modules: i32, max_w: i32, max_h: i32) -> Option<QrLayout> {
+    if modules <= 0 || max_w <= 0 || max_h <= 0 {
+        return None;
+    }
+    let units = modules + 2 * QR_QUIET;
+    let scale = (max_w / units).min(max_h / units).min(QR_MAX_SCALE);
+    if scale < QR_MIN_SCALE {
+        return None;
+    }
+    Some(QrLayout {
+        scale,
+        size_px: units * scale,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,5 +278,20 @@ mod tests {
         // last partial page: only 3 rows exist
         assert_eq!(row_at(LIST_Y0 + 2 * ROW_H, 5, 5, 8), Some(7));
         assert_eq!(row_at(LIST_Y0 + 3 * ROW_H, 5, 5, 8), None);
+    }
+    #[test]
+    fn qr_layout_math() {
+        // v2 code (25 modules) + 8 quiet = 33 units; capped at scale 10
+        let l = qr_layout(25, 1040, 700).unwrap();
+        assert_eq!(l.scale, 10);
+        assert_eq!(l.size_px, 330);
+        // tight box shrinks scale, keeps quiet zone inside size_px
+        let l = qr_layout(29, 200, 200).unwrap();
+        assert_eq!(l.scale, 200 / 37);
+        assert_eq!(l.size_px, 37 * l.scale);
+        // too small -> None, garbage -> None
+        assert!(qr_layout(29, 50, 50).is_none());
+        assert!(qr_layout(0, 500, 500).is_none());
+        assert!(qr_layout(25, 0, 500).is_none());
     }
 }
