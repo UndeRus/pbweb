@@ -68,6 +68,10 @@ opens it.
   progress bar; finished uploads stay as "✓ name (size)" until the next one.
 - Log tab shows recent HTTP requests served.
 - No top status bar; no blocking `NetConnect*` calls — the UI never hangs.
+- Partial screen updates (PocketPuzzles pattern): taps, selection moves,
+  progress ticks and countdown repaint only their rects via `PartialUpdate`;
+  `FullUpdate` runs on tab switches, server transitions and every 10th
+  partial (anti-ghosting).
 
 WiFi details: online = `NetInfo()->connected` only; `NetConnectSilent` then
 `NetConnectAsync` + poll; `EVT_NET_CONNECTED` handling; real IP via `getifaddrs`

@@ -50,6 +50,9 @@ pub struct UploadState {
     pub started_ms: AtomicU64,
     pub done_msg: Mutex<String>,
     pub active: AtomicBool,
+    /// Set when an upload finishes (ok or fail) so the UI paints one
+    /// final clean frame. Consumed by the progress hook wrapper.
+    pub finished: AtomicBool,
     last_hook_ms: AtomicU64,
 }
 
@@ -61,6 +64,7 @@ impl UploadState {
         self.started_ms.store(now_ms(), Ordering::Relaxed);
         *self.done_msg.lock().unwrap() = String::new();
         self.active.store(true, Ordering::Relaxed);
+        self.finished.store(false, Ordering::Relaxed);
     }
     fn reset(&self) {
         self.active.store(false, Ordering::Relaxed);
@@ -534,14 +538,24 @@ impl Server {
                 if !full.is_dir() {
                     return err(400, "target not a dir");
                 }
-                match save_multipart(&self.stats, req, &full) {
+                let resp = match save_multipart(&self.stats, req, &full) {
                     Ok(n) => json(serde_json::json!({"ok": true, "bytes": n})),
                     Err(e) => err(500, &e),
-                }
+                };
+                // upload over (ok or fail): force the final clean UI frame
+                finish_upload(&self.stats);
+                resp
             }
             _ => err(404, "not found"),
         }
     }
+}
+
+/// Mark upload finished (ok or fail) and force one last hook fire so the
+/// device UI paints the final state.
+pub fn finish_upload(stats: &Arc<Stats>) {
+    stats.upload.finished.store(true, Ordering::Relaxed);
+    stats.fire_hook_forced();
 }
 
 fn json(v: serde_json::Value) -> tiny_http::Response<std::io::Cursor<Vec<u8>>> {
@@ -889,6 +903,24 @@ mod tests {
             Some("z.pdf".to_string())
         );
         assert_eq!(first_filename(b"nope"), None);
+    }
+
+    #[test]
+    fn finish_upload_forces_final_hook() {
+        // Regression: the throttled tick must not swallow the finish frame
+        // (device screen used to stick mid-progress on upload completion).
+        use std::sync::atomic::AtomicBool;
+        let s = Arc::new(Stats::default());
+        let fired = Arc::new(AtomicBool::new(false));
+        let f = fired.clone();
+        s.set_hook(Arc::new(move || f.store(true, Ordering::Relaxed)));
+        // simulate a tick that just fired -> next fire is throttled away
+        s.upload.last_hook_ms.store(now_ms(), Ordering::Relaxed);
+        s.fire_hook();
+        assert!(!fired.load(Ordering::Relaxed), "throttled tick must skip");
+        finish_upload(&s);
+        assert!(fired.load(Ordering::Relaxed), "finish must force");
+        assert!(s.upload.finished.load(Ordering::Relaxed));
     }
 
     #[test]

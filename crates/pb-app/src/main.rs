@@ -40,136 +40,143 @@ mod device {
     const F_STATE: i32 = 44;
     const F_URL: i32 = 60;
 
-    fn open_fonts() -> Option<(*mut std::os::raw::c_void, *mut std::os::raw::c_void)> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// Partials since last full refresh (anti-ghosting, PocketPuzzles pattern).
+    static PARTIAL_COUNT: AtomicU32 = AtomicU32::new(0);
+
+    /// Present a repainted rect: fast partial update, with a periodic full
+    /// refresh to wipe e-ink ghosting.
+    fn present(r: pb_ui::Rect) {
         unsafe {
-            let small = iv::OpenFont(cstring("LiberationSans").as_ptr(), F_TITLE, 1);
-            let body = iv::OpenFont(cstring("LiberationSans").as_ptr(), F_BODY, 1);
-            if small.is_null() || body.is_null() {
-                log_line("draw: OpenFont NULL");
-                for f in [small, body] {
-                    if !f.is_null() {
-                        iv::CloseFont(f);
-                    }
-                }
-                iv::FullUpdate();
-                return None;
+            let c = r.clamp_to(iv::ScreenWidth(), iv::ScreenHeight());
+            if c.is_empty() {
+                return;
             }
-            Some((small, body))
+            let n = PARTIAL_COUNT.fetch_add(1, Ordering::Relaxed);
+            if (n + 1) % pb_ui::FULL_EVERY_N_PARTIALS == 0 {
+                iv::FullUpdate();
+            } else {
+                iv::PartialUpdate(c.x, c.y, c.w, c.h);
+            }
         }
     }
 
-    fn open_font_big() -> *mut std::os::raw::c_void {
-        unsafe { iv::OpenFont(cstring("LiberationSans").as_ptr(), F_URL, 1) }
+    /// Open a font, paint with it, close it. Keeps partial paths simple;
+    /// a font open costs milliseconds.
+    fn with_font(size: i32, color: i32, paint: impl FnOnce(*mut std::os::raw::c_void)) {
+        unsafe {
+            let f = iv::OpenFont(cstring("LiberationSans").as_ptr(), size, 1);
+            if f.is_null() {
+                log_line("paint: OpenFont NULL");
+                return;
+            }
+            iv::SetFont(f, color);
+            paint(f);
+            iv::CloseFont(f);
+        }
     }
 
-    fn open_font_state() -> *mut std::os::raw::c_void {
-        unsafe { iv::OpenFont(cstring("LiberationSans").as_ptr(), F_STATE, 1) }
-    }
-
-    fn draw(state: &UiState) {
-        use pb_ui::{bottom_buttons, BOTTOM_H, GAP};
+    /// Full redraw: ClearScreen + paint everything + FullUpdate.
+    /// Used on INIT, tab switches and state transitions. Resets the
+    /// partial counter and caches screen size / QR size for workers.
+    fn draw(state: &mut UiState) {
+        state.dirty = None;
         unsafe {
             iv::ClearScreen();
-            let w = iv::ScreenWidth();
-            let h = iv::ScreenHeight();
-            let Some((f_small, f_body)) = open_fonts() else {
-                return;
-            };
-            match state.tab {
-                pb_ui::Tab::Status => draw_status(f_small, f_body, state, w, h),
-                pb_ui::Tab::Files => {
-                    iv::SetFont(f_body, iv::BLACK);
-                    let dir = cstring(&format!("Файлы: {}", state.current_dir));
-                    iv::DrawTextRect(GAP, 16, w - 2 * GAP, 56, dir.as_ptr(), iv::ALIGN_LEFT);
-                    draw_file_rows(f_body, state, w);
-                }
-                pb_ui::Tab::Log => {
-                    iv::SetFont(f_small, iv::BLACK);
-                    let l = cstring(&log_text());
-                    iv::DrawTextRect(
-                        GAP,
-                        16,
-                        w - 2 * GAP,
-                        h - 16 - BOTTOM_H - 16,
-                        l.as_ptr(),
-                        iv::ALIGN_LEFT,
-                    );
-                }
+        }
+        let w = unsafe { iv::ScreenWidth() };
+        let h = unsafe { iv::ScreenHeight() };
+        state.screen_w = w;
+        state.screen_h = h;
+        let tab = state.tab;
+        match tab {
+            pb_ui::Tab::Status => {
+                paint_status(state, w, h);
             }
-            // bottom buttons: 3 big touch targets
-            let btns = bottom_buttons(state.tab, state.server_on, w, h);
-            for b in &btns {
-                let primary = b.id == pb_ui::BtnId::Primary;
-                if primary {
-                    iv::FillArea(b.x, b.y, b.w, b.h, iv::BLACK);
-                    iv::SetFont(f_body, iv::WHITE);
-                } else {
-                    iv::FillArea(b.x, b.y, b.w, b.h, iv::WHITE);
-                    iv::DrawRect(b.x, b.y, b.w, b.h, iv::BLACK);
-                    iv::DrawRect(b.x + 3, b.y + 3, b.w - 6, b.h - 6, iv::BLACK);
-                    iv::SetFont(f_body, iv::BLACK);
-                }
-                let lb = cstring(&b.label);
-                iv::DrawTextRect(
-                    b.x,
-                    b.y,
-                    b.w,
-                    b.h,
-                    lb.as_ptr(),
-                    iv::ALIGN_CENTER | iv::VALIGN_MIDDLE,
-                );
+            pb_ui::Tab::Files => {
+                paint_dir(state, w);
+                paint_rows_block(state, w, h);
             }
-            iv::CloseFont(f_small);
-            iv::CloseFont(f_body);
+            pb_ui::Tab::Log => {
+                paint_log(state, w, h);
+            }
+        }
+        paint_buttons(state, w, h);
+        unsafe {
             iv::FullUpdate();
         }
+        PARTIAL_COUNT.store(0, Ordering::Relaxed);
     }
 
-    /// Status tab: state, huge URL, wifi, steps, upload progress, message.
-    /// (QR block lives in draw_qr below.)
-    fn draw_status(
-        f_small: *mut std::os::raw::c_void,
-        f_body: *mut std::os::raw::c_void,
-        state: &UiState,
-        w: i32,
-        h: i32,
-    ) {
-        use pb_ui::{BOTTOM_H, GAP};
+    /// Paint one file row (white-fill first so a moved highlight leaves
+    /// no ghost). Returns its rect for present().
+    fn paint_row(state: &UiState, w: i32, gi: usize, per: usize) -> Option<pb_ui::Rect> {
+        let i = gi.checked_sub(state.files_page * per)?;
+        let entry = list_current_dir(&state.current_dir).into_iter().nth(gi)?;
+        let r = pb_ui::row_rect(i, w);
+        let sel = gi == state.selection;
+        let mark = if sel { "> " } else { "   " };
+        let ic = if entry.is_dir { "[Папка] " } else { "[Файл] " };
+        with_font(F_BODY, iv::BLACK, |_| unsafe {
+            iv::FillArea(r.x, r.y, r.w, r.h, if sel { iv::LGRAY } else { iv::WHITE });
+            let line = cstring(&format!("{mark}{ic}{}", entry.name));
+            iv::DrawTextRect(
+                r.x + 8, r.y, r.w - 16, r.h,
+                line.as_ptr(), iv::ALIGN_LEFT | iv::VALIGN_MIDDLE,
+            );
+        });
+        Some(r)
+    }
+
+    /// Paint the whole visible rows block (dir changes, page changes).
+    /// White-fills the block first so shorter listings leave no ghosts.
+    /// Returns the repainted rect.
+    fn paint_rows_block(state: &UiState, w: i32, h: i32) -> pb_ui::Rect {
+        let layout = pb_ui::files_layout(w, h);
         unsafe {
-            let mut y = 16;
-            iv::SetFont(f_small, iv::BLACK);
-            let title = cstring("PBWeb - передача файлов");
-            iv::DrawTextRect(GAP, y, w - 2 * GAP, 44, title.as_ptr(), iv::ALIGN_LEFT);
-            y += 52;
-            let f_state = open_font_state();
-            if !f_state.is_null() {
-                iv::SetFont(f_state, iv::BLACK);
-                let stxt = if state.server_on {
-                    "Сервер запущен"
-                } else if state.wifi_connecting {
-                    "Подключение..."
-                } else {
-                    "Сервер остановлен"
-                };
-                let s = cstring(stxt);
-                iv::DrawTextRect(GAP, y, w - 2 * GAP, 64, s.as_ptr(), iv::ALIGN_LEFT);
-                iv::CloseFont(f_state);
-            }
-            y += 72;
-            let f_url = open_font_big();
-            if !f_url.is_null() {
-                iv::SetFont(f_url, iv::BLACK);
-                let url = if state.server_on {
-                    state.url()
-                } else {
-                    "нажми СТАРТ".to_owned()
-                };
-                let u = cstring(&url);
-                iv::DrawTextRect(GAP, y, w - 2 * GAP, 200, u.as_ptr(), iv::ALIGN_LEFT);
-                iv::CloseFont(f_url);
-            }
-            y += 208;
-            iv::SetFont(f_body, iv::BLACK);
+            iv::FillArea(
+                layout.rows.x, layout.rows.y,
+                layout.rows.w, layout.rows.h, iv::WHITE,
+            );
+        }
+        for i in 0..layout.per_page {
+            let gi = state.files_page * layout.per_page + i;
+            // paint_row re-lists per row; fine for small dirs
+            let _ = paint_row(state, w, gi, layout.per_page);
+        }
+        layout.rows
+    }
+
+    /// Paint the Files dir header line. Returns its rect.
+    fn paint_dir(state: &UiState, w: i32) -> pb_ui::Rect {
+        use pb_ui::GAP;
+        let r = pb_ui::files_layout(w, state.screen_h.max(1)).dir;
+        with_font(F_BODY, iv::BLACK, |_| unsafe {
+            iv::FillArea(r.x, r.y, r.w, r.h, iv::WHITE);
+            let dir = cstring(&format!("Файлы: {}", state.current_dir));
+            iv::DrawTextRect(r.x, r.y, r.w, r.h, dir.as_ptr(), iv::ALIGN_LEFT);
+        });
+        let _ = GAP;
+        r
+    }
+
+    /// Paint the message line (status tab). Returns its rect.
+    fn paint_message(state: &UiState, w: i32, h: i32) -> pb_ui::Rect {
+        let r = pb_ui::message_rect(w, h);
+        with_font(F_TITLE, iv::BLACK, |_| unsafe {
+            iv::FillArea(r.x, r.y, r.w, r.h, iv::WHITE);
+            let m = cstring(&state.message);
+            iv::DrawTextRect(r.x, r.y, r.w, r.h, m.as_ptr(), iv::ALIGN_LEFT);
+        });
+        r
+    }
+
+    /// Paint the wifi line (status tab). Returns its rect.
+    fn paint_wifi(state: &UiState, w: i32, h: i32) -> pb_ui::Rect {
+        let l = pb_ui::status_layout(w, h, 0, false, false);
+        with_font(F_BODY, iv::BLACK, |_| unsafe {
+            iv::FillArea(l.wifi.x, l.wifi.y, l.wifi.w, l.wifi.h, iv::WHITE);
             let wifi = if state.wifi_on {
                 if state.ssid.is_empty() {
                     "WiFi: включён".to_owned()
@@ -180,138 +187,250 @@ mod device {
                 "WiFi: выключен".to_owned()
             };
             let wl = cstring(&wifi);
-            iv::DrawTextRect(GAP, y, w - 2 * GAP, 54, wl.as_ptr(), iv::ALIGN_LEFT);
-            y += 62;
-            if state.server_on && usable_ip(&state.ip) {
-                // QR under the link while serving; steps would not fit
-                y = draw_qr(f_small, &state.url(), w, h, y);
+            iv::DrawTextRect(
+                l.wifi.x, l.wifi.y, l.wifi.w, l.wifi.h,
+                wl.as_ptr(), iv::ALIGN_LEFT,
+            );
+        });
+        l.wifi
+    }
+
+    /// Paint title + state + url blocks (status tab).
+    fn paint_head(state: &UiState, w: i32, h: i32) {
+        let l = pb_ui::status_layout(w, h, 0, false, false);
+        with_font(F_TITLE, iv::BLACK, |_| unsafe {
+            iv::FillArea(l.title.x, l.title.y, l.title.w, l.title.h, iv::WHITE);
+            let title = cstring("PBWeb - передача файлов");
+            iv::DrawTextRect(
+                l.title.x, l.title.y, l.title.w, l.title.h,
+                title.as_ptr(), iv::ALIGN_LEFT,
+            );
+        });
+        with_font(F_STATE, iv::BLACK, |_| unsafe {
+            iv::FillArea(l.state.x, l.state.y, l.state.w, l.state.h, iv::WHITE);
+            let stxt = if state.server_on {
+                "Сервер запущен"
+            } else if state.wifi_connecting {
+                "Подключение..."
             } else {
-                iv::SetFont(f_small, iv::BLACK);
-                let steps = cstring("1. Подключи телефон к этому WiFi\n2. Открой адрес выше в браузере\n3. СТОП - остановить, ВЫХОД - выйти");
-                iv::DrawTextRect(GAP, y, w - 2 * GAP, 130, steps.as_ptr(), iv::ALIGN_LEFT);
-                y += 138;
+                "Сервер остановлен"
+            };
+            let s = cstring(stxt);
+            iv::DrawTextRect(
+                l.state.x, l.state.y, l.state.w, l.state.h,
+                s.as_ptr(), iv::ALIGN_LEFT,
+            );
+        });
+        with_font(F_URL, iv::BLACK, |_| unsafe {
+            iv::FillArea(l.url.x, l.url.y, l.url.w, l.url.h, iv::WHITE);
+            let url = if state.server_on {
+                state.url()
+            } else {
+                "нажми СТАРТ".to_owned()
+            };
+            let u = cstring(&url);
+            iv::DrawTextRect(
+                l.url.x, l.url.y, l.url.w, l.url.h,
+                u.as_ptr(), iv::ALIGN_LEFT,
+            );
+        });
+    }
+
+    /// Paint the upload progress block. Returns painted rect (None if idle).
+    fn paint_upload(state: &UiState, w: i32, h: i32) -> Option<pb_ui::Rect> {
+        let srv = SERVER.get()?;
+        let (line, pct) = srv.stats.upload_display();
+        if line.is_empty() {
+            return None;
+        }
+        // Bar geometry is always reserved: a finished bar must be wiped
+        // clean, otherwise its ghost stays under the done message.
+        let l = pb_ui::status_layout(w, h, state.qr_size_px, true, true);
+        let lr = l.upload_line?;
+        let br = l.upload_bar?;
+        with_font(F_BODY, iv::BLACK, |_| unsafe {
+            iv::FillArea(lr.x, lr.y, lr.w, lr.h, iv::WHITE);
+            let ul = cstring(&line);
+            iv::DrawTextRect(lr.x, lr.y, lr.w, lr.h, ul.as_ptr(), iv::ALIGN_LEFT);
+        });
+        if let Some(p) = pct {
+            unsafe {
+                iv::DrawRect(br.x, br.y, br.w, 30, iv::BLACK);
+                let fill = (br.w as u32 * p as u32 / 100) as i32;
+                if fill > 4 {
+                    iv::FillArea(br.x + 2, br.y + 2, fill - 4, 26, iv::BLACK);
+                }
             }
-            // upload progress (file, percent, speed, bar)
-            if let Some(srv) = SERVER.get() {
-                let (line, pct) = srv.stats.upload_display();
-                if !line.is_empty() {
-                    iv::SetFont(f_body, iv::BLACK);
-                    let ul = cstring(&line);
-                    iv::DrawTextRect(GAP, y, w - 2 * GAP, 110, ul.as_ptr(), iv::ALIGN_LEFT);
-                    y += 112;
-                    if let Some(p) = pct {
-                        let bw = w - 2 * GAP;
-                        iv::DrawRect(GAP, y, bw, 30, iv::BLACK);
-                        let fill = (bw as u32 * p as u32 / 100) as i32;
-                        if fill > 4 {
-                            iv::FillArea(GAP + 2, y + 2, fill - 4, 26, iv::BLACK);
+        } else {
+            unsafe {
+                iv::FillArea(br.x, br.y, br.w, br.h, iv::WHITE);
+            }
+        }
+        Some(lr.union(&br))
+    }
+
+    /// Paint the whole status content (full-draw path). Caches the QR size
+    /// in state *before* painting upload, so partial repaints later reuse
+    /// the exact same geometry.
+    fn paint_status(state: &mut UiState, w: i32, h: i32) {
+        paint_title_block(w);
+        paint_head(state, w, h);
+        // QR size: encode once, cache in layout math
+        let mut qr_size = 0;
+        if state.server_on && usable_ip(&state.ip) {
+            if let Ok(code) = qrcode::QrCode::new(state.url().as_bytes()) {
+                let modules = code.width() as i32;
+                // reserve room for the hint line + upload block + message
+                let max_h = h - pb_ui::BOTTOM_H - 260 - 410;
+                if let Some(l) = pb_ui::qr_layout(modules, w - 2 * pb_ui::GAP, max_h) {
+                    qr_size = l.size_px;
+                }
+            }
+        }
+        state.qr_size_px = qr_size;
+        paint_mid_sized(state, w, h, qr_size);
+        paint_upload(state, w, h);
+        paint_message(state, w, h);
+    }
+
+    fn paint_title_block(w: i32) {
+        // title shares the status layout geometry
+        let l = pb_ui::status_layout(w, 1448, 0, false, false);
+        with_font(F_TITLE, iv::BLACK, |_| unsafe {
+            iv::FillArea(l.title.x, l.title.y, l.title.w, l.title.h, iv::WHITE);
+            let title = cstring("PBWeb - передача файлов");
+            iv::DrawTextRect(
+                l.title.x, l.title.y, l.title.w, l.title.h,
+                title.as_ptr(), iv::ALIGN_LEFT,
+            );
+        });
+    }
+
+    /// Steps/QR painter used when the QR size is already known.
+    fn paint_mid_sized(state: &UiState, w: i32, h: i32, qr_size: i32) {
+        let show_qr = state.server_on && usable_ip(&state.ip) && qr_size > 0;
+        let l = pb_ui::status_layout(w, h, if show_qr { qr_size } else { 0 }, false, false);
+        if show_qr {
+            if let Ok(code) = qrcode::QrCode::new(state.url().as_bytes()) {
+                let modules = code.width() as i32;
+                let scale = qr_size / (modules + 2 * pb_ui::QR_QUIET);
+                if scale >= 1 {
+                    if let Some(q) = l.qr {
+                        unsafe {
+                            iv::FillArea(q.x, q.y, q.w, q.h, iv::WHITE);
+                            for my in 0..modules {
+                                for mx in 0..modules {
+                                    if matches!(code[(mx as usize, my as usize)], qrcode::Color::Dark) {
+                                        iv::FillArea(
+                                            q.x + (pb_ui::QR_QUIET + mx) * scale,
+                                            q.y + (pb_ui::QR_QUIET + my) * scale,
+                                            scale, scale, iv::BLACK,
+                                        );
+                                    }
+                                }
+                            }
                         }
-                        y += 38;
+                        with_font(F_TITLE, iv::BLACK, |_| unsafe {
+                            let hint = cstring("Отсканируй камерой телефона");
+                            iv::DrawTextRect(
+                                l.mid.x, l.mid.y + qr_size + 8, l.mid.w, 44,
+                                hint.as_ptr(), iv::ALIGN_CENTER,
+                            );
+                        });
+                        return;
                     }
                 }
             }
-            // message line above buttons
-            let _ = y;
-            iv::SetFont(f_small, iv::BLACK);
-            let m = cstring(&state.message);
+        }
+        with_font(F_TITLE, iv::BLACK, |_| unsafe {
+            iv::FillArea(l.mid.x, l.mid.y, l.mid.w, l.mid.h, iv::WHITE);
+            let steps = cstring("1. Подключи телефон к этому WiFi\n2. Открой адрес выше в браузере\n3. СТОП - остановить, ВЫХОД - выйти");
             iv::DrawTextRect(
-                GAP,
-                h - BOTTOM_H - 52,
-                w - 2 * GAP,
-                48,
-                m.as_ptr(),
-                iv::ALIGN_LEFT,
+                l.mid.x, l.mid.y, l.mid.w, l.mid.h,
+                steps.as_ptr(), iv::ALIGN_LEFT,
             );
+        });
+    }
+
+    /// Paint the log area. Returns its rect.
+    fn paint_log(state: &UiState, w: i32, h: i32) -> pb_ui::Rect {
+        let r = pb_ui::log_rect(w, h);
+        let _ = state;
+        with_font(F_TITLE, iv::BLACK, |_| unsafe {
+            iv::FillArea(r.x, r.y, r.w, r.h, iv::WHITE);
+            let l = cstring(&log_text());
+            iv::DrawTextRect(r.x, r.y, r.w, r.h, l.as_ptr(), iv::ALIGN_LEFT);
+        });
+        r
+    }
+
+    /// Paint one bottom button. All buttons are white with black text;
+    /// `pressed` inverts to a black flash (visible on e-ink, unlike a
+    /// flash on an already-black button).
+    fn paint_button(btn: &pb_ui::Btn, pressed: bool) {
+        with_font(F_BODY, if pressed { iv::WHITE } else { iv::BLACK }, |_| unsafe {
+            if pressed {
+                iv::FillArea(btn.x, btn.y, btn.w, btn.h, iv::BLACK);
+            } else {
+                iv::FillArea(btn.x, btn.y, btn.w, btn.h, iv::WHITE);
+                iv::DrawRect(btn.x, btn.y, btn.w, btn.h, iv::BLACK);
+                iv::DrawRect(btn.x + 3, btn.y + 3, btn.w - 6, btn.h - 6, iv::BLACK);
+            }
+            let lb = cstring(&btn.label);
+            iv::DrawTextRect(
+                btn.x, btn.y, btn.w, btn.h,
+                lb.as_ptr(), iv::ALIGN_CENTER | iv::VALIGN_MIDDLE,
+            );
+        });
+    }
+
+    fn paint_buttons(state: &UiState, w: i32, h: i32) {
+        for b in &pb_ui::bottom_buttons(state.tab, state.server_on, w, h) {
+            paint_button(b, false);
+        }
+    }
+
+    /// Route a worker-requested partial repaint (consumed from state.dirty).
+    fn paint_dirty(st: &Arc<Mutex<UiState>>, d: pb_ui::Dirty) {
+        let Ok(s) = st.lock() else { return };
+        let (w, h) = (s.screen_w, s.screen_h);
+        use pb_ui::Dirty::*;
+        match (s.tab, d) {
+            (pb_ui::Tab::Status, Message) => {
+                let r = paint_message(&s, w, h);
+                drop(s);
+                present(r);
+            }
+            (pb_ui::Tab::Status, Upload) => {
+                if let Some(r) = paint_upload(&s, w, h) {
+                    drop(s);
+                    present(r);
+                }
+            }
+            (pb_ui::Tab::Status, Wifi) => {
+                paint_wifi(&s, w, h);
+                let l = pb_ui::status_layout(w, h, 0, false, false);
+                drop(s);
+                present(l.wifi);
+            }
+            (pb_ui::Tab::Log, Log) => {
+                let r = paint_log(&s, w, h);
+                drop(s);
+                present(r);
+            }
+            (_, Full) => {
+                drop(s);
+                if let Ok(mut s) = st.lock() {
+                    draw(&mut s);
+                }
+            }
+            _ => {}
         }
     }
 
     /// IP is usable for a QR/link when it looks like a real address.
     fn usable_ip(ip: &str) -> bool {
         !(ip.is_empty() || ip == "?" || ip == "-") && ip.contains('.')
-    }
-
-    /// QR code of the server URL right under the link, with a spec quiet
-    /// zone plus white backdrop so phone cameras lock on. Returns y below
-    /// the block. Skipped silently when the URL has no usable IP or the
-    /// code doesn't fit the remaining space.
-    fn draw_qr(
-        f_small: *mut std::os::raw::c_void,
-        url: &str,
-        w: i32,
-        h: i32,
-        y: i32,
-    ) -> i32 {
-        use pb_ui::{qr_layout, BOTTOM_H, GAP, QR_QUIET};
-        unsafe {
-            let Ok(code) = qrcode::QrCode::new(url.as_bytes()) else {
-                return y;
-            };
-            let modules = code.width() as i32;
-            // reserve room for the hint line + upload block + message
-            let max_h = h - BOTTOM_H - 260 - y;
-            let Some(l) = qr_layout(modules, w - 2 * GAP, max_h) else {
-                return y;
-            };
-            let x0 = (w - l.size_px) / 2;
-            iv::FillArea(x0, y, l.size_px, l.size_px, iv::WHITE);
-            for my in 0..modules {
-                for mx in 0..modules {
-                    if matches!(code[(mx as usize, my as usize)], qrcode::Color::Dark) {
-                        iv::FillArea(
-                            x0 + (QR_QUIET + mx) * l.scale,
-                            y + (QR_QUIET + my) * l.scale,
-                            l.scale,
-                            l.scale,
-                            iv::BLACK,
-                        );
-                    }
-                }
-            }
-            let mut ny = y + l.size_px + 8;
-            iv::SetFont(f_small, iv::BLACK);
-            let hint = cstring("Отсканируй камерой телефона");
-            iv::DrawTextRect(GAP, ny, w - 2 * GAP, 44, hint.as_ptr(), iv::ALIGN_CENTER);
-            ny += 52;
-            ny
-        }
-    }
-
-    fn draw_file_rows(f_body: *mut std::os::raw::c_void, state: &UiState, w: i32) {
-        use pb_ui::{GAP, LIST_Y0, ROW_H};
-        unsafe {
-            iv::SetFont(f_body, iv::BLACK);
-            let listing = list_current_dir(&state.current_dir);
-            let per = pb_ui::files_per_page(iv::ScreenHeight());
-            for (i, e) in listing.iter().skip(state.files_page * per).take(per).enumerate() {
-                let gi = state.files_page * per + i;
-                let y = LIST_Y0 + (i as i32) * ROW_H;
-                if gi == state.selection {
-                    iv::FillArea(GAP, y, w - 2 * GAP, ROW_H - 6, iv::LGRAY);
-                }
-                let mark = if gi == state.selection { "> " } else { "   " };
-                let ic = if e.is_dir { "[Папка] " } else { "[Файл] " };
-                let line = cstring(&format!("{mark}{ic}{}", e.name));
-                iv::DrawTextRect(
-                    GAP + 8,
-                    y,
-                    w - 2 * GAP - 16,
-                    ROW_H - 6,
-                    line.as_ptr(),
-                    iv::ALIGN_LEFT | iv::VALIGN_MIDDLE,
-                );
-            }
-            if listing.is_empty() {
-                let e = cstring("(папка пуста)");
-                iv::DrawTextRect(
-                    GAP,
-                    LIST_Y0,
-                    w - 2 * GAP,
-                    ROW_H,
-                    e.as_ptr(),
-                    iv::ALIGN_LEFT,
-                );
-            }
-        }
     }
 
     fn list_current_dir(dir: &str) -> Vec<pb_core::FileEntry> {
@@ -366,11 +485,18 @@ mod device {
                 iv::SetPanelType(0);
                 s.message = "Нажми СТАРТ".into();
                 log_line("init ok");
-                draw(&s);
+                draw(&mut s);
                 return 1;
             }
             x if x == iv::EVT_SHOW => {
-                draw(&s);
+                // Worker-requested partial repaint (progress, countdown);
+                // anything else (dialogs, foregrounding) gets a full draw.
+                if let Some(d) = s.dirty.take() {
+                    drop(s);
+                    paint_dirty(&st, d);
+                    return 1;
+                }
+                draw(&mut s);
                 return 1;
             }
             x if x == iv::EVT_EXIT => {
@@ -387,13 +513,13 @@ mod device {
                 if !s.server_on && !s.wifi_connecting {
                     s.message = "WiFi есть. Нажми СТАРТ.".into();
                 }
-                draw(&s);
+                draw(&mut s);
                 return 1;
             }
             x if x == iv::EVT_NET_DISCONNECTED => {
                 log_line("net disconnected event");
                 s.wifi_on = false;
-                draw(&s);
+                draw(&mut s);
                 return 1;
             }
             x if x == iv::EVT_KEYPRESS => {
@@ -406,7 +532,7 @@ mod device {
                             s.current_dir = par;
                             s.selection = 0;
                             s.files_page = 0;
-                            draw(&s);
+                            draw(&mut s);
                             return 1;
                         }
                     }
@@ -420,22 +546,29 @@ mod device {
                 }
                 if p1 == iv::KEY_NEXT {
                     s.next_tab();
-                    draw(&s);
+                    draw(&mut s);
                     return 1;
                 }
                 if p1 == iv::KEY_PREV {
                     s.prev_tab();
-                    draw(&s);
+                    draw(&mut s);
                     return 1;
                 }
                 if p1 == KEY_UP || p1 == KEY_DOWN {
                     if s.tab != pb_ui::Tab::Files {
                         s.tab = pb_ui::Tab::Files;
+                        draw(&mut s);
+                        return 1;
                     }
                     let per = pb_ui::files_per_page(iv::ScreenHeight());
                     let len = file_count(&s.current_dir);
+                    let old = s.selection;
                     s.move_sel(len, if p1 == KEY_DOWN { 1 } else { -1 }, per);
-                    draw(&s);
+                    let new = s.selection;
+                    // selection move repaints two rows only (no full flash)
+                    let (w, _) = live_wh(&s);
+                    drop(s);
+                    repaint_rows(&st, w, per, &[old, new]);
                     return 1;
                 }
             }
@@ -448,6 +581,22 @@ mod device {
     /// POINTER* and TOUCH* events (FW delivers x/y there).
     fn touch_xy(_evt: i32, p1: i32, p2: i32) -> (i32, i32) {
         (p1, p2)
+    }
+
+    /// Screen size, preferring the INIT-cached values (workers must not
+    /// call into InkView for this).
+    fn live_wh(s: &UiState) -> (i32, i32) {
+        let w = if s.screen_w > 0 {
+            s.screen_w
+        } else {
+            unsafe { iv::ScreenWidth() }
+        };
+        let h = if s.screen_h > 0 {
+            s.screen_h
+        } else {
+            unsafe { iv::ScreenHeight() }
+        };
+        (w, h)
     }
 
     fn file_count(dir: &str) -> usize {
@@ -503,6 +652,38 @@ mod device {
         request_redraw();
     }
 
+    /// Set the message text without any screen update (caller picks
+    /// full redraw or a message-only partial).
+    fn set_text(st: &Arc<Mutex<UiState>>, msg: &str) {
+        if let Ok(mut s) = st.lock() {
+            s.message = msg.into();
+        }
+    }
+
+    /// Worker-side partial repaint request: marks the region dirty and wakes
+    /// the GUI thread, which paints just that rect (PocketPuzzles pattern).
+    /// Skipped entirely when the region isn't visible — no wasted wakeups.
+    fn request_partial(st: &Arc<Mutex<UiState>>, d: pb_ui::Dirty) {
+        let mut send = false;
+        if let Ok(mut s) = st.lock() {
+            let visible = matches!(
+                (s.tab, d),
+                (pb_ui::Tab::Status, pb_ui::Dirty::Message)
+                    | (pb_ui::Tab::Status, pb_ui::Dirty::Upload)
+                    | (pb_ui::Tab::Status, pb_ui::Dirty::Wifi)
+                    | (pb_ui::Tab::Log, pb_ui::Dirty::Log)
+                    | (_, pb_ui::Dirty::Full)
+            );
+            if visible {
+                s.dirty = Some(d);
+                send = true;
+            }
+        }
+        if send {
+            request_redraw();
+        }
+    }
+
     /// Refresh wifi_on/ssid from NetInfo (best effort, never panics).
     fn refresh_net_state(s: &mut UiState) {
         if let Some(n) = iv::netinfo_full() {
@@ -519,6 +700,24 @@ mod device {
         0
     }
 
+    /// Repaint listed selection rows (counted as one partial).
+    fn repaint_rows(st: &Arc<Mutex<UiState>>, w: i32, per: usize, idxs: &[usize]) {
+        let Ok(s) = st.lock() else { return };
+        let mut union: Option<pb_ui::Rect> = None;
+        for &gi in idxs {
+            if let Some(r) = paint_row(&s, w, gi, per) {
+                union = Some(match union {
+                    Some(u) => u.union(&r),
+                    None => r,
+                });
+            }
+        }
+        drop(s);
+        if let Some(r) = union {
+            present(r);
+        }
+    }
+
     /// Tap routing: bottom buttons -> file rows. True if handled.
     /// (No top bar anymore — tabs switch via the ЭКРАН button / PREV/NEXT.)
     fn handle_tap(st: &Arc<Mutex<UiState>>, x: i32, y: i32) -> bool {
@@ -532,6 +731,12 @@ mod device {
             // 1) bottom buttons
             let btns = bottom_buttons(tab, server_on, w, h);
             if let Some(id) = hit_button(&btns, x, y) {
+                // instant press feedback on the button rect (PocketPuzzles
+                // pattern: InvertArea + PartialUpdate, no full flash)
+                if let Some(b) = btns.iter().find(|b| b.id == id) {
+                    paint_button(b, true);
+                    present(pb_ui::btn_rect(b));
+                }
                 drop(s);
                 match id {
                     pb_ui::BtnId::Primary => {
@@ -548,8 +753,9 @@ mod device {
                                 } else {
                                     s.tab = pb_ui::Tab::Status;
                                 }
-                                draw(&s);
                             }
+                            // dir line + rows block only
+                            repaint_files_region(st, w, h);
                         } else {
                             press_start(st);
                         }
@@ -557,7 +763,7 @@ mod device {
                     pb_ui::BtnId::Tabs => {
                         if let Ok(mut s) = st.lock() {
                             s.next_tab();
-                            draw(&s);
+                            draw(&mut s);
                         }
                     }
                     pb_ui::BtnId::Exit => {
@@ -573,21 +779,37 @@ mod device {
                 let per = pb_ui::files_per_page(h);
                 let total = file_count(&s.current_dir);
                 if let Some(idx) = row_at(y, s.files_page * per, per, total) {
+                    let old = s.selection;
+                    let next = descend(&s.current_dir.clone(), idx);
+                    let nav = next.is_some();
                     drop(s);
                     if let Ok(mut s) = st.lock() {
                         s.selection = idx;
-                        if let Some(next) = descend(&s.current_dir.clone(), idx) {
+                        if let Some(next) = next {
                             s.current_dir = next;
                             s.selection = 0;
                             s.files_page = 0;
                         }
-                        draw(&s);
+                    }
+                    if nav {
+                        repaint_files_region(st, w, h);
+                    } else {
+                        repaint_rows(st, w, per, &[old, idx]);
                     }
                     return true;
                 }
             }
             false
         }
+    }
+
+    /// Repaint dir header + rows block (UP navigation, dir changes).
+    fn repaint_files_region(st: &Arc<Mutex<UiState>>, w: i32, h: i32) {
+        let Ok(s) = st.lock() else { return };
+        let dir = paint_dir(&s, w);
+        let rows = paint_rows_block(&s, w, h);
+        drop(s);
+        present(dir.union(&rows));
     }
 
     /// STOP button: real shutdown (unblocks the accept loop, closes socket).
@@ -601,7 +823,7 @@ mod device {
             s.server_on = false;
             s.wifi_connecting = false;
             s.message = "Сервер остановлен".into();
-            draw(&s);
+            draw(&mut s);
         }
     }
 
@@ -637,7 +859,7 @@ mod device {
         if let Ok(mut s) = st.lock() {
             s.wifi_connecting = true;
             s.message = "Запуск...".into();
-            draw(&s);
+            draw(&mut s);
         }
         wifi_and_serve(st.clone());
     }
@@ -702,7 +924,8 @@ mod device {
                 log_line(&format!("worker start: {}", net_dump()));
                 if !online() {
                     // 1) silent attempt: no dialogs, quick
-                    set_msg(&st2, "Подключение к WiFi...");
+                    set_text(&st2, "Подключение к WiFi...");
+                    request_partial(&st2, pb_ui::Dirty::Message);
                     match iv::net_connect_silent() {
                         Some(rc) => log_line(&format!("worker: silent rc={rc}")),
                         None => log_line("worker: NetConnectSilent missing"),
@@ -717,7 +940,8 @@ mod device {
                         Some(rc) => log_line(&format!("worker: async started rc={rc}")),
                         None => {
                             log_line("worker: NetConnectAsync missing!");
-                            set_msg(&st2, "Нет WiFi. Подключись в настройках и нажми СТАРТ.");
+                            set_text(&st2, "Нет WiFi. Подключись в настройках и нажми СТАРТ.");
+                            request_partial(&st2, pb_ui::Dirty::Message);
                             finish_connecting(&st2);
                             return;
                         }
@@ -731,14 +955,16 @@ mod device {
                             break;
                         }
                         if waited % 4 == 0 {
-                            set_msg(&st2, &format!("Подключение к WiFi... {}с", waited / 2));
+                            set_text(&st2, &format!("Подключение к WiFi... {}с", waited / 2));
+                            request_partial(&st2, pb_ui::Dirty::Message);
                         }
                         if waited >= 90 {
                             log_line(&format!("worker: wifi timeout: {}", net_dump()));
-                            set_msg(
+                            set_text(
                                 &st2,
                                 "Нет WiFi. Подключись в настройках и нажми СТАРТ.",
                             );
+                            request_partial(&st2, pb_ui::Dirty::Message);
                             finish_connecting(&st2);
                             return;
                         }
@@ -748,9 +974,22 @@ mod device {
                 let ip = crate::primary_ip().unwrap_or_else(|| "?".into());
                 let roots = Roots::device_defaults();
                 let srv = Arc::new(Server::new(roots));
-                // progress hook: redraw the device screen as bytes arrive
-                srv.stats
-                    .set_hook(Arc::new(|| request_redraw()));
+                // progress hook: repaint only the upload block as bytes
+                // arrive (PocketPuzzles pattern: no full flash per tick).
+                // When an upload just finished, paint one full frame instead
+                // so the final state is exact (no bar ghost, no stuck %).
+                let hook_st = st2.clone();
+                let hook_stats = srv.stats.clone();
+                srv.stats.set_hook(Arc::new(move || {
+                    if hook_stats.upload.finished.swap(false, Ordering::Relaxed) {
+                        if let Ok(mut s) = hook_st.lock() {
+                            s.dirty = Some(pb_ui::Dirty::Full);
+                        }
+                        request_redraw();
+                    } else {
+                        request_partial(&hook_st, pb_ui::Dirty::Upload);
+                    }
+                }));
                 let _ = SERVER.set(srv.clone());
                 match srv.bind_shared(8080) {
                     Ok((http, port)) => {
@@ -779,14 +1018,16 @@ mod device {
                     }
                     Err(e) => {
                         log_line(&format!("worker: bind failed: {e}"));
-                        set_msg(&st2, &format!("Ошибка запуска: {e}"));
+                        set_text(&st2, &format!("Ошибка запуска: {e}"));
+                        request_partial(&st2, pb_ui::Dirty::Message);
                     }
                 }
                 finish_connecting(&st2);
             });
         if let Err(e) = spawn {
             log_line(&format!("thread spawn failed: {e}"));
-            set_msg(&st, &format!("Ошибка потока: {e}"));
+            set_text(&st, &format!("Ошибка потока: {e}"));
+            request_partial(&st, pb_ui::Dirty::Message);
             finish_connecting(&st);
         }
     }
@@ -803,7 +1044,7 @@ mod device {
         std::panic::set_hook(Box::new(|info| {
             log_line(&format!("PANIC: {info}"));
         }));
-        log_line("pbweb 0.2.4 starting");
+        log_line("pbweb 0.2.5 starting");
         let _ = HANDLER_FN.set(handler);
         let state = Arc::new(Mutex::new(UiState::default()));
         let _ = STATE.set(state);
