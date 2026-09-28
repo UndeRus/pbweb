@@ -27,8 +27,15 @@ pub const EVT_TOUCHMOVE: c_int = 49;
 // 73 is EVT_FSCHANGED — don't mix them up.
 pub const EVT_FSINCOMING: c_int = 72;
 pub const EVT_FSCHANGED: c_int = 73;
-// Library scan service events.
+// Library scan service events (FW 6.5 header + firmware RE: the scanner.app
+// event table answers 0xD6 with "Not Implemented", 0xD7 runs a device scan,
+// 0xD8 is broadcast when the scan worker finishes).
+// NOTE: EVT_STOPSCAN is intentionally never sent (server side is a no-op).
+pub const EVT_STOPSCAN: c_int = 214;
 pub const EVT_STARTSCAN: c_int = 215;
+pub const EVT_SCANSTOPPED: c_int = 216;
+/// SendEventTo target: broadcast to every task (monitor.app + services).
+pub const TASK_BROADCAST: c_int = -3;
 
 pub const KEY_PREV: c_int = 0x18;
 pub const KEY_NEXT: c_int = 0x19;
@@ -118,6 +125,10 @@ extern "C" {
     // only GetTouchInfoI(int), older FWs export GetTouchInfo(void).
     // Resolved at runtime via dlsym, see touch_slot() below.
     pub fn SendEvent(h: IvHandler, t: c_int, p1: c_int, p2: c_int);
+    /// Deliver an event to another task by id (symbol verified present in
+    /// 6.5 libinkview via nm). Used for the EVT_STARTSCAN broadcast to the
+    /// resident scanner.app service.
+    pub fn SendEventTo(task: c_int, t: c_int, p1: c_int, p2: c_int) -> c_int;
 }
 
 #[repr(C)]
@@ -178,8 +189,16 @@ pub unsafe fn QueryNetwork() -> c_int {
     0
 }
 #[cfg(not(feature = "device"))]
-pub unsafe fn NetConnect(_n: *const c_char) -> c_int {
+pub unsafe fn SendEventTo(_task: c_int, _t: c_int, _p1: c_int, _p2: c_int) -> c_int {
     -1
+}
+#[cfg(not(feature = "device"))]
+pub fn scan_flag() -> Option<bool> {
+    None
+}
+#[cfg(not(feature = "device"))]
+pub fn db_changes() -> Option<u32> {
+    None
 }
 #[cfg(not(feature = "device"))]
 pub unsafe fn NetDisconnect() {}
@@ -287,8 +306,7 @@ mod opt {
     /// Touch coordinates, FW-agnostic: SDK 6.5 has GetTouchInfoI(int slot),
     /// older firmwares have GetTouchInfo(void). Returns None if neither
     /// resolves (caller falls back to event par1/par2).
-    pub fn touch_slot() -> Option<(c_int, c_int)> {
-        unsafe {
+    pub fn touch_slot() -> Option<(c_int, c_int)> {        unsafe {
             let p = sym("GetTouchInfoI");
             if !p.is_null() {
                 let f: extern "C" fn(c_int) -> *mut super::TouchInfo =
@@ -309,12 +327,42 @@ mod opt {
         }
         None
     }
+
+    /// Offsets into the ivmpc global state block (libinkview BSS export).
+    /// FIRMWARE-SPECIFIC: verified on U633 6.5.2915 by firmware RE;
+    /// may differ on other FW versions — treat results as best-effort.
+    const IVMPC_SCAN_FLAG_OFF: usize = 0x4C;
+    const IVMPC_DB_CHANGES_OFF: usize = 0x41DC;
+
+    fn ivmpc_base() -> *mut u8 {
+        sym("ivmpc") as *mut u8
+    }
+
+    /// Nonzero while scanner.app is running a library scan. None if the
+    /// symbol is missing (pure diagnostic helper, plain aligned loads).
+    pub fn scan_flag() -> Option<bool> {
+        let base = ivmpc_base();
+        if base.is_null() {
+            return None;
+        }
+        Some(unsafe { (base.add(IVMPC_SCAN_FLAG_OFF) as *const i16).read_unaligned() } != 0)
+    }
+
+    /// DB-changes counter bumped by the scanner. Compare before/after a
+    /// scan broadcast to prove the library DB actually changed.
+    pub fn db_changes() -> Option<u32> {
+        let base = ivmpc_base();
+        if base.is_null() {
+            return None;
+        }
+        Some(unsafe { (base.add(IVMPC_DB_CHANGES_OFF) as *const u32).read_unaligned() })
+    }
 }
 
 #[cfg(feature = "device")]
 pub use opt::{
-    net_connect2_last, net_connect_async, net_connect_silent, netinfo_connected, netinfo_full,
-    postpone_poweroff, touch_slot, NetAsyncCb,
+    db_changes, net_connect2_last, net_connect_async, net_connect_silent, netinfo_connected,
+    netinfo_full, postpone_poweroff, scan_flag, touch_slot, NetAsyncCb,
 };
 
 #[cfg(not(feature = "device"))]
@@ -456,4 +504,20 @@ pub fn lan_ip() -> Option<String> {
 #[cfg(not(target_os = "linux"))]
 pub fn lan_ip() -> Option<String> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Event/task constants must match the firmware (SDK 6.5 header +
+    /// firmware RE: 0xD6 STOPSCAN / 0xD7 STARTSCAN / 0xD8 SCANSTOPPED,
+    /// broadcast task 0xFFFFFFFD).
+    #[test]
+    fn scan_bus_constants() {
+        assert_eq!(EVT_STOPSCAN, 0xD6);
+        assert_eq!(EVT_STARTSCAN, 0xD7);
+        assert_eq!(EVT_SCANSTOPPED, 0xD8);
+        assert_eq!(TASK_BROADCAST, -3);
+    }
 }

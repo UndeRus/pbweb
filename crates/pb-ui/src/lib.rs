@@ -33,6 +33,9 @@ pub struct UiState {
     /// Pending partial repaint for the next EVT_SHOW. Set by worker
     /// threads, consumed by the GUI handler. None = full redraw.
     pub dirty: Option<Dirty>,
+    /// Library rescan requested, completion (EVT_SCANSTOPPED) not seen yet.
+    /// Guards against duplicate broadcasts and spurious stop events.
+    pub library_scanning: bool,
 }
 
 impl Default for UiState {
@@ -54,6 +57,7 @@ impl Default for UiState {
         screen_h: 1448,
         qr_size_px: 0,
         dirty: None,
+        library_scanning: false,
         }
     }
 }

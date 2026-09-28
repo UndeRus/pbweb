@@ -522,6 +522,20 @@ mod device {
                 draw(&mut s);
                 return 1;
             }
+            x if x == iv::EVT_SCANSTOPPED => {
+                // Library rescan finished (resident scanner.app broadcast).
+                // Only meaningful if we asked for one; otherwise ignore so
+                // system scans don't rewrite our screen.
+                if !s.library_scanning {
+                    return 0;
+                }
+                s.library_scanning = false;
+                let changes = iv::db_changes();
+                log_line(&format!("library scan stopped, db_changes={changes:?}"));
+                s.message = "Библиотека обновлена".into();
+                draw(&mut s);
+                return 1;
+            }
             x if x == iv::EVT_KEYPRESS => {
                 log_line(&format!("key p1={p1}"));
                 const KEY_UP: i32 = 0x11;
@@ -814,17 +828,43 @@ mod device {
 
     /// STOP button: real shutdown (unblocks the accept loop, closes socket).
     /// WiFi stays on so START works instantly afterwards.
+    /// Then asks the resident scanner.app to reindex the library
+    /// (broadcast EVT_STARTSCAN) — single redraw, no flicker.
     fn stop_server(st: &Arc<Mutex<UiState>>) {
         log_line("stop pressed");
         if let Some(srv) = SERVER.get() {
             srv.shutdown();
         }
+        fire_scan_broadcast();
         if let Ok(mut s) = st.lock() {
             s.server_on = false;
             s.wifi_connecting = false;
-            s.message = "Сервер остановлен".into();
+            s.library_scanning = true;
+            s.message = "Сервер остановлен. Обновляю библиотеку...".into();
             draw(&mut s);
         }
+    }
+
+    /// Ask the resident scanner.app service to rescan the library, exactly
+    /// like PBScanClient::startDeviceScan() does: broadcast EVT_STARTSCAN
+    /// (0xD7) to every task. Fire-and-forget; completion arrives later as
+    /// EVT_SCANSTOPPED in our own handler. Everything is logged.
+    fn fire_scan_broadcast() {
+        let rc = unsafe { iv::SendEventTo(iv::TASK_BROADCAST, iv::EVT_STARTSCAN, 0, 0) };
+        let mode = read_scanmode();
+        let changes = iv::db_changes();
+        let scanning = iv::scan_flag();
+        log_line(&format!(
+            "library scan: broadcast rc={rc} scanmode={mode:?} scanning={scanning:?} db_changes={changes:?}"
+        ));
+    }
+
+    /// Read the library scan policy (0=Off, 1=Once, 2=Auto) from global.cfg.
+    /// Diagnostics only — the 0xD7 handler path doesn't check it, and neither
+    /// do we: the setting stays the user's own business.
+    fn read_scanmode() -> Option<i32> {
+        let content = std::fs::read_to_string("/mnt/ext1/system/config/global.cfg").ok()?;
+        crate::parse_scanmode(&content)
     }
 
     /// START button / MENU / OK: wifi prompt, then async connect in worker.
@@ -865,7 +905,10 @@ mod device {
     }
 
     fn exit_app(_s: &UiState) {
-        log_line("exit: rescan + CloseApp");
+        log_line("exit: scan broadcast + rescan + CloseApp");
+        // The scan outlives us: scanner.app is a resident service, so the
+        // reindex continues (and finishes) after our process exits.
+        fire_scan_broadcast();
         crate::library_rescan();
         unsafe {
             iv::iv_sync();
@@ -1044,7 +1087,7 @@ mod device {
         std::panic::set_hook(Box::new(|info| {
             log_line(&format!("PANIC: {info}"));
         }));
-        log_line("pbweb 0.2.5 starting");
+        log_line("pbweb 0.2.6 starting");
         let _ = HANDLER_FN.set(handler);
         let state = Arc::new(Mutex::new(UiState::default()));
         let _ = STATE.set(state);
@@ -1098,6 +1141,24 @@ fn filetime_touch(path: &str, _now: std::time::SystemTime) -> std::io::Result<()
     Ok(())
 }
 
+/// Parse the library scan policy from global.cfg content.
+/// Format is `scanmode=N` lines (0=Off, 1=Once, 2=Auto); first match wins.
+fn parse_scanmode(content: &str) -> Option<i32> {
+    for line in content.lines() {
+        let t = line.trim().trim_start_matches(['#', ';']).trim_start();
+        let Some(rest) = t.strip_prefix("scanmode") else {
+            continue;
+        };
+        let val = rest.trim_start_matches(['=', ' ', '\t', ':']);
+        let digits: String = val.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() {
+            continue;
+        }
+        return digits.parse::<i32>().ok();
+    }
+    None
+}
+
 fn main() {
     #[cfg(feature = "device")]
     device::run();
@@ -1124,5 +1185,15 @@ mod tests {
         assert!((21..=41).contains(&(code.width() as i32)));
         // finder pattern corner is dark
         assert!(matches!(code[(0, 0)], qrcode::Color::Dark));
+    }
+
+    #[test]
+    fn scanmode_parsing() {
+        assert_eq!(super::parse_scanmode("scanmode=2\n"), Some(2));
+        assert_eq!(super::parse_scanmode("# comment\nscanmode = 0\n"), Some(0));
+        assert_eq!(super::parse_scanmode("scanmode:1\r\n"), Some(1));
+        assert_eq!(super::parse_scanmode("other=5\n"), None);
+        assert_eq!(super::parse_scanmode(""), None);
+        assert_eq!(super::parse_scanmode("scanmode=\n"), None);
     }
 }

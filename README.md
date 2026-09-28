@@ -83,6 +83,13 @@ Stop with the ВЫХОД button or BACK: fs sync + exit.
 New books land as files immediately; Library metadata (title/author/cover)
 is indexed by the firmware on its own schedule — open Library to refresh.
 
+Library rescan (0.2.6+): on СТОП and ВЫХОД the app broadcasts `EVT_STARTSCAN`
+to the resident `scanner.app` service — exactly what the firmware's own
+`PBScanClient::startDeviceScan()` does (`SendEventTo(-3, 0xD7, 0, 0)`).
+Completion arrives as `EVT_SCANSTOPPED` ("Библиотека обновлена" on screen);
+scan policy (`scanmode`) is only read for the log, never changed.
+No `EVT_STOPSCAN` — the firmware answers it "Not Implemented".
+
 Diagnostics: the app appends to `/mnt/ext1/pbweb.log` (startup, key/touch codes,
 WiFi steps, panics). If something crashes, send this file — it tells exactly where.
 
