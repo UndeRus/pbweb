@@ -195,17 +195,9 @@ mod device {
         l.wifi
     }
 
-    /// Paint title + state + url blocks (status tab).
-    fn paint_head(state: &UiState, w: i32, h: i32) {
+    /// Paint the server-state line (status tab). Returns its rect.
+    fn paint_state(state: &UiState, w: i32, h: i32) -> pb_ui::Rect {
         let l = pb_ui::status_layout(w, h, 0, false, false);
-        with_font(F_TITLE, iv::BLACK, |_| unsafe {
-            iv::FillArea(l.title.x, l.title.y, l.title.w, l.title.h, iv::WHITE);
-            let title = cstring("PBWeb - передача файлов");
-            iv::DrawTextRect(
-                l.title.x, l.title.y, l.title.w, l.title.h,
-                title.as_ptr(), iv::ALIGN_LEFT,
-            );
-        });
         with_font(F_STATE, iv::BLACK, |_| unsafe {
             iv::FillArea(l.state.x, l.state.y, l.state.w, l.state.h, iv::WHITE);
             let stxt = if state.server_on {
@@ -221,6 +213,21 @@ mod device {
                 s.as_ptr(), iv::ALIGN_LEFT,
             );
         });
+        l.state
+    }
+
+    /// Paint title + state + url blocks (status tab).
+    fn paint_head(state: &UiState, w: i32, h: i32) {
+        let l = pb_ui::status_layout(w, h, 0, false, false);
+        with_font(F_TITLE, iv::BLACK, |_| unsafe {
+            iv::FillArea(l.title.x, l.title.y, l.title.w, l.title.h, iv::WHITE);
+            let title = cstring("PBWeb - передача файлов");
+            iv::DrawTextRect(
+                l.title.x, l.title.y, l.title.w, l.title.h,
+                title.as_ptr(), iv::ALIGN_LEFT,
+            );
+        });
+        paint_state(state, w, h);
         with_font(F_URL, iv::BLACK, |_| unsafe {
             iv::FillArea(l.url.x, l.url.y, l.url.w, l.url.h, iv::WHITE);
             let url = if state.server_on {
@@ -517,9 +524,16 @@ mod device {
                 return 1;
             }
             x if x == iv::EVT_NET_DISCONNECTED => {
+                // only the wifi line changes -> partial, no flash
                 log_line("net disconnected event");
                 s.wifi_on = false;
-                draw(&mut s);
+                let (w, h) = live_wh(&s);
+                drop(s);
+                if let Ok(s) = st.lock() {
+                    let r = paint_wifi(&s, w, h);
+                    drop(s);
+                    present(r);
+                }
                 return 1;
             }
             x if x == iv::EVT_SCANSTOPPED => {
@@ -533,7 +547,14 @@ mod device {
                 let changes = iv::db_changes();
                 log_line(&format!("library scan stopped, db_changes={changes:?}"));
                 s.message = "Библиотека обновлена".into();
-                draw(&mut s);
+                let (w, h) = live_wh(&s);
+                drop(s);
+                // only the message line changes -> partial, no flash
+                if let Ok(s) = st.lock() {
+                    let r = paint_message(&s, w, h);
+                    drop(s);
+                    present(r);
+                }
                 return 1;
             }
             x if x == iv::EVT_KEYPRESS => {
@@ -546,7 +567,10 @@ mod device {
                             s.current_dir = par;
                             s.selection = 0;
                             s.files_page = 0;
-                            draw(&mut s);
+                            let (w, h) = live_wh(&s);
+                            drop(s);
+                            // dir + rows only, no full flash
+                            repaint_files_region(&st, w, h);
                             return 1;
                         }
                     }
@@ -659,18 +683,24 @@ mod device {
         }
     }
 
-    fn set_msg(st: &Arc<Mutex<UiState>>, msg: &str) {
-        if let Ok(mut s) = st.lock() {
-            s.message = msg.into();
-        }
-        request_redraw();
-    }
-
-    /// Set the message text without any screen update (caller picks
-    /// full redraw or a message-only partial).
     fn set_text(st: &Arc<Mutex<UiState>>, msg: &str) {
         if let Ok(mut s) = st.lock() {
             s.message = msg.into();
+        }
+    }
+
+    /// GUI-side message update: text + message-only partial (no full flash).
+    /// Skipped when the message line isn't visible (Files/Log tabs).
+    fn set_msg_partial(st: &Arc<Mutex<UiState>>, msg: &str) {
+        set_text(st, msg);
+        if let Ok(s) = st.lock() {
+            if s.tab != pb_ui::Tab::Status {
+                return;
+            }
+            let (w, h) = live_wh(&s);
+            let r = paint_message(&s, w, h);
+            drop(s);
+            present(r);
         }
     }
 
@@ -733,7 +763,7 @@ mod device {
     }
 
     /// Tap routing: bottom buttons -> file rows. True if handled.
-    /// (No top bar anymore — tabs switch via the ЭКРАН button / PREV/NEXT.)
+    /// (No top bar anymore — tabs switch via the middle button / PREV/NEXT.)
     fn handle_tap(st: &Arc<Mutex<UiState>>, x: i32, y: i32) -> bool {
         use pb_ui::{bottom_buttons, hit_button, row_at};
         unsafe {
@@ -829,7 +859,8 @@ mod device {
     /// STOP button: real shutdown (unblocks the accept loop, closes socket).
     /// WiFi stays on so START works instantly afterwards.
     /// Then asks the resident scanner.app to reindex the library
-    /// (broadcast EVT_STARTSCAN) — single redraw, no flicker.
+    /// (broadcast EVT_STARTSCAN). Repaints message + buttons + mid block
+    /// as three partials instead of one full flash.
     fn stop_server(st: &Arc<Mutex<UiState>>) {
         log_line("stop pressed");
         if let Some(srv) = SERVER.get() {
@@ -841,7 +872,26 @@ mod device {
             s.wifi_connecting = false;
             s.library_scanning = true;
             s.message = "Сервер остановлен. Обновляю библиотеку...".into();
-            draw(&mut s);
+        }
+        if let Ok(s) = st.lock() {
+            let (w, h) = live_wh(&s);
+            let m = paint_message(&s, w, h);
+            paint_buttons(&s, w, h);
+            let mut bar: Option<pb_ui::Rect> = None;
+            for b in &pb_ui::bottom_buttons(s.tab, s.server_on, w, h) {
+                bar = Some(match bar {
+                    Some(u) => u.union(&pb_ui::btn_rect(b)),
+                    None => pb_ui::btn_rect(b),
+                });
+            }
+            paint_mid_sized(&s, w, h, 0);
+            let mid = pb_ui::status_layout(w, h, 0, false, false).mid;
+            drop(s);
+            present(m);
+            present(mid);
+            if let Some(b) = bar {
+                present(b);
+            }
         }
     }
 
@@ -875,11 +925,11 @@ mod device {
             Err(_) => return,
         };
         if server_on {
-            set_msg(st, "Сервер уже запущен");
+            set_msg_partial(st, "Сервер уже запущен");
             return;
         }
         if connecting {
-            set_msg(st, "Уже подключаюсь, подожди...");
+            set_msg_partial(st, "Уже подключаюсь, подожди...");
             return;
         }
         let ans = unsafe {
@@ -899,7 +949,14 @@ mod device {
         if let Ok(mut s) = st.lock() {
             s.wifi_connecting = true;
             s.message = "Запуск...".into();
-            draw(&mut s);
+            // state + message lines only (dialog follows, its close path
+            // does a full draw via EVT_SHOW fallback)
+            let (w, h) = live_wh(&s);
+            let rs = paint_state(&s, w, h);
+            let rm = paint_message(&s, w, h);
+            drop(s);
+            present(rs);
+            present(rm);
         }
         wifi_and_serve(st.clone());
     }
@@ -1087,7 +1144,7 @@ mod device {
         std::panic::set_hook(Box::new(|info| {
             log_line(&format!("PANIC: {info}"));
         }));
-        log_line("pbweb 0.2.6 starting");
+        log_line("pbweb 0.2.7 starting");
         let _ = HANDLER_FN.set(handler);
         let state = Arc::new(Mutex::new(UiState::default()));
         let _ = STATE.set(state);

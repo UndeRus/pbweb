@@ -154,6 +154,7 @@ pub struct Btn {
 
 /// Bottom button bar: always 3 big buttons.
 /// Primary = START/STOP (status, log) or UP (files).
+/// The middle button shows the *destination* tab so its purpose is obvious.
 pub fn bottom_buttons(tab: Tab, server_on: bool, sw: i32, sh: i32) -> Vec<Btn> {
     let y = sh - BOTTOM_H + 20;
     let h = BOTTOM_H - 40;
@@ -167,6 +168,12 @@ pub fn bottom_buttons(tab: Tab, server_on: bool, sw: i32, sh: i32) -> Vec<Btn> {
                 "СТАРТ".to_string()
             }
         }
+    };
+    // same cycle as UiState::next_tab: Status -> Files -> Log -> Status
+    let tabs_label = match tab {
+        Tab::Status => "ФАЙЛЫ",
+        Tab::Files => "ЖУРНАЛ",
+        Tab::Log => "СТАТУС",
     };
     vec![
         Btn {
@@ -183,7 +190,7 @@ pub fn bottom_buttons(tab: Tab, server_on: bool, sw: i32, sh: i32) -> Vec<Btn> {
             y,
             w,
             h,
-            label: "ЭКРАН".to_string(),
+            label: tabs_label.to_string(),
         },
         Btn {
             id: BtnId::Exit,
@@ -515,6 +522,7 @@ mod tests {
         assert_eq!(bs.len(), 3);
         assert!(bs.iter().all(|b| b.h >= 100));
         assert_eq!(bs[0].label, "СТАРТ");
+        assert_eq!(bs[1].label, "ФАЙЛЫ");
         assert_eq!(hit_button(&bs, 100, 1448 - 60), Some(BtnId::Primary));
         assert_eq!(hit_button(&bs, 536, 1448 - 60), Some(BtnId::Tabs));
         assert_eq!(hit_button(&bs, 1000, 1448 - 60), Some(BtnId::Exit));
@@ -523,8 +531,10 @@ mod tests {
         assert_eq!(bs_on[0].label, "СТОП");
         let bf = bottom_buttons(Tab::Files, false, 1072, 1448);
         assert_eq!(bf[0].label, "ВВЕРХ");
+        assert_eq!(bf[1].label, "ЖУРНАЛ");
         let bl = bottom_buttons(Tab::Log, true, 1072, 1448);
         assert_eq!(bl.len(), 3);
+        assert_eq!(bl[1].label, "СТАТУС");
     }
     #[test]
     fn row_hit_testing() {

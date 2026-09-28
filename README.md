@@ -59,8 +59,8 @@ Device run: open `pbweb.app` → big СТАРТ button (or MENU key) → Yes in 
 WiFi prompt → non-blocking connect (silent first, then async, 45s cap with
 countdown) → huge URL + QR code underneath (scan with phone camera to open
 the upload page), + steps on screen when idle. All in Russian, all actions are
-big touch buttons: СТАРТ/СТОП, ЭКРАН (cycle tabs), ВЫХОД; tapping a file row
-opens it.
+big touch buttons: СТАРТ/СТОП, middle button named after the tab it
+opens (ФАЙЛЫ/ЖУРНАЛ/СТАТУС), ВЫХОД; tapping a file row opens it.
 
 - СТОП really stops the server (socket closed, accept loop unblocked) — WiFi
   stays on, СТАРТ works again instantly.
@@ -69,9 +69,9 @@ opens it.
 - Log tab shows recent HTTP requests served.
 - No top status bar; no blocking `NetConnect*` calls — the UI never hangs.
 - Partial screen updates (PocketPuzzles pattern): taps, selection moves,
-  progress ticks and countdown repaint only their rects via `PartialUpdate`;
-  `FullUpdate` runs on tab switches, server transitions and every 10th
-  partial (anti-ghosting).
+  progress ticks, countdown, wifi/scan messages and BACK navigation repaint
+  only their rects via `PartialUpdate`; `FullUpdate` runs on tab switches,
+  server transitions and every 10th partial (anti-ghosting).
 
 WiFi details: online = `NetInfo()->connected` only; `NetConnectSilent` then
 `NetConnectAsync` + poll; `EVT_NET_CONNECTED` handling; real IP via `getifaddrs`
