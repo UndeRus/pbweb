@@ -351,6 +351,10 @@ mod device {
         }
         with_font(F_TITLE, iv::BLACK, |_| unsafe {
             iv::FillArea(l.mid.x, l.mid.y, l.mid.w, l.mid.h, iv::WHITE);
+            // keyonly builds describe keys (no touch hints for old readers).
+            #[cfg(feature = "keyonly")]
+            let steps = cstring("1. Подключи телефон к этому WiFi\n2. Открой адрес выше в браузере\n3. ОК - старт/стоп, НАЗАД - выход");
+            #[cfg(not(feature = "keyonly"))]
             let steps = cstring("1. Подключи телефон к этому WiFi\n2. Открой адрес выше в браузере\n3. СТОП - остановить, ВЫХОД - выйти");
             iv::DrawTextRect(
                 l.mid.x, l.mid.y, l.mid.w, l.mid.h,
@@ -559,10 +563,76 @@ mod device {
             }
             x if x == iv::EVT_KEYPRESS => {
                 log_line(&format!("key p1={p1}"));
-                const KEY_UP: i32 = 0x11;
-                const KEY_DOWN: i32 = 0x12;
-                if p1 == iv::KEY_BACK {
-                    if s.tab == pb_ui::Tab::Files {
+                // All key routing lives in pb-ui (pure + host-tested);
+                // the handler only executes the resulting action.
+                match pb_ui::key_action(s.tab, p1) {
+                    pb_ui::KeyAction::ToggleServer => {
+                        let on = s.server_on;
+                        drop(s);
+                        toggle_server(&st, on);
+                        return 1;
+                    }
+                    pb_ui::KeyAction::NextTab => {
+                        s.next_tab();
+                        draw(&mut s);
+                        return 1;
+                    }
+                    pb_ui::KeyAction::PrevTab => {
+                        s.prev_tab();
+                        draw(&mut s);
+                        return 1;
+                    }
+                    pb_ui::KeyAction::MoveSel(d) => {
+                        if s.tab != pb_ui::Tab::Files {
+                            s.tab = pb_ui::Tab::Files;
+                            draw(&mut s);
+                            return 1;
+                        }
+                        let per = pb_ui::files_per_page(unsafe { iv::ScreenHeight() });
+                        let len = file_count(&s.current_dir);
+                        let old = s.selection;
+                        s.move_sel(len, d, per);
+                        let new = s.selection;
+                        // selection move repaints two rows only (no full flash)
+                        let (w, _) = live_wh(&s);
+                        drop(s);
+                        repaint_rows(&st, w, per, &[old, new]);
+                        return 1;
+                    }
+                    pb_ui::KeyAction::Page(d) => {
+                        if s.tab != pb_ui::Tab::Files {
+                            s.tab = pb_ui::Tab::Files;
+                            draw(&mut s);
+                            return 1;
+                        }
+                        let (w, h) = live_wh(&s);
+                        let per = pb_ui::files_per_page(h);
+                        let len = file_count(&s.current_dir);
+                        s.move_sel(len, d * per as isize, per);
+                        drop(s);
+                        repaint_files_region(&st, w, h);
+                        return 1;
+                    }
+                    pb_ui::KeyAction::Enter => {
+                        // OK/RIGHT in Files: descend like a tap on the row.
+                        // (Tapping a file only selects it, so keys lose nothing.)
+                        if s.tab != pb_ui::Tab::Files {
+                            return 1;
+                        }
+                        let next = descend(&s.current_dir.clone(), s.selection);
+                        let (w, h) = live_wh(&s);
+                        if let Some(next) = next {
+                            s.current_dir = next;
+                            s.selection = 0;
+                            s.files_page = 0;
+                            drop(s);
+                            repaint_files_region(&st, w, h);
+                        }
+                        return 1;
+                    }
+                    pb_ui::KeyAction::Up => {
+                        // LEFT/BACK in Files: up a dir; at root back to
+                        // Status (a second BACK then exits — no accidents).
                         if let Some(par) = pb_ui::UiState::parent_dir(&s.current_dir.clone()) {
                             s.current_dir = par;
                             s.selection = 0;
@@ -571,43 +641,17 @@ mod device {
                             drop(s);
                             // dir + rows only, no full flash
                             repaint_files_region(&st, w, h);
-                            return 1;
+                        } else {
+                            s.tab = pb_ui::Tab::Status;
+                            draw(&mut s);
                         }
-                    }
-                    exit_app(&s);
-                    return 1;
-                }
-                if p1 == 0x17 /* MENU */ || p1 == iv::KEY_OK {
-                    drop(s);
-                    press_start(&st);
-                    return 1;
-                }
-                if p1 == iv::KEY_NEXT {
-                    s.next_tab();
-                    draw(&mut s);
-                    return 1;
-                }
-                if p1 == iv::KEY_PREV {
-                    s.prev_tab();
-                    draw(&mut s);
-                    return 1;
-                }
-                if p1 == KEY_UP || p1 == KEY_DOWN {
-                    if s.tab != pb_ui::Tab::Files {
-                        s.tab = pb_ui::Tab::Files;
-                        draw(&mut s);
                         return 1;
                     }
-                    let per = pb_ui::files_per_page(iv::ScreenHeight());
-                    let len = file_count(&s.current_dir);
-                    let old = s.selection;
-                    s.move_sel(len, if p1 == KEY_DOWN { 1 } else { -1 }, per);
-                    let new = s.selection;
-                    // selection move repaints two rows only (no full flash)
-                    let (w, _) = live_wh(&s);
-                    drop(s);
-                    repaint_rows(&st, w, per, &[old, new]);
-                    return 1;
+                    pb_ui::KeyAction::Exit => {
+                        exit_app(&s);
+                        return 1;
+                    }
+                    pb_ui::KeyAction::None => {}
                 }
             }
             _ => {}
@@ -729,6 +773,8 @@ mod device {
     }
 
     /// Refresh wifi_on/ssid from NetInfo (best effort, never panics).
+    /// FW5/6 only — see the pro903 variant below.
+    #[cfg(not(feature = "pro903"))]
     fn refresh_net_state(s: &mut UiState) {
         if let Some(n) = iv::netinfo_full() {
             s.wifi_on = n.connected != 0;
@@ -736,6 +782,14 @@ mod device {
         } else {
             s.wifi_on = unsafe { iv::QueryNetwork() != 0 };
         }
+    }
+
+    /// Pro 903 / FW2: iv_netinfo is opaque in the old headers (real layout
+    /// unknown), so NetInfo is never touched — QueryNetwork() is the only
+    /// state signal. SSID stays empty → the wifi line shows "WiFi: включён".
+    #[cfg(feature = "pro903")]
+    fn refresh_net_state(s: &mut UiState) {
+        s.wifi_on = unsafe { iv::QueryNetwork() != 0 };
     }
 
     // Async-connect callback: only logged, polling NetInfo is the truth.
@@ -870,8 +924,17 @@ mod device {
         if let Ok(mut s) = st.lock() {
             s.server_on = false;
             s.wifi_connecting = false;
-            s.library_scanning = true;
-            s.message = "Сервер остановлен. Обновляю библиотеку...".into();
+            #[cfg(not(feature = "pro903"))]
+            {
+                s.library_scanning = true;
+                s.message = "Сервер остановлен. Обновляю библиотеку...".into();
+            }
+            #[cfg(feature = "pro903")]
+            {
+                // No scanner service on FW2 (see fire_scan_broadcast).
+                s.library_scanning = false;
+                s.message = "Сервер остановлен".into();
+            }
         }
         if let Ok(s) = st.lock() {
             let (w, h) = live_wh(&s);
@@ -899,6 +962,8 @@ mod device {
     /// like PBScanClient::startDeviceScan() does: broadcast EVT_STARTSCAN
     /// (0xD7) to every task. Fire-and-forget; completion arrives later as
     /// EVT_SCANSTOPPED in our own handler. Everything is logged.
+    /// FW5/6 only — see the pro903 stub below.
+    #[cfg(not(feature = "pro903"))]
     fn fire_scan_broadcast() {
         let rc = unsafe { iv::SendEventTo(iv::TASK_BROADCAST, iv::EVT_STARTSCAN, 0, 0) };
         let mode = read_scanmode();
@@ -909,16 +974,27 @@ mod device {
         ));
     }
 
+    /// Pro 903 / FW2: no resident scanner.app service and no STARTSCAN
+    /// broadcast — the symbol isn't even linked. Files still land on disk
+    /// immediately; the user refreshes Library manually (same as any
+    /// FW2 sideload). Deliberately a no-op so STOP/ВЫХОД stay instant.
+    #[cfg(feature = "pro903")]
+    fn fire_scan_broadcast() {
+        log_line("library scan: skipped (no scanner service on FW2)");
+    }
+
     /// Read the library scan policy (0=Off, 1=Once, 2=Auto) from global.cfg.
     /// Diagnostics only — the 0xD7 handler path doesn't check it, and neither
     /// do we: the setting stays the user's own business.
+    /// FW5/6 only (the pro903 broadcast is a no-op that never reads it).
+    #[cfg(not(feature = "pro903"))]
     fn read_scanmode() -> Option<i32> {
         let content = std::fs::read_to_string("/mnt/ext1/system/config/global.cfg").ok()?;
         crate::parse_scanmode(&content)
     }
 
     /// START button / MENU / OK: wifi prompt, then async connect in worker.
-    /// Runs on the GUI thread (DialogSynchro blocks here, never in worker).
+    /// Runs on the GUI thread (dialogs block here, never in the worker).
     fn press_start(st: &Arc<Mutex<UiState>>) {
         let (server_on, connecting) = match st.lock() {
             Ok(s) => (s.server_on, s.wifi_connecting),
@@ -932,21 +1008,59 @@ mod device {
             set_msg_partial(st, "Уже подключаюсь, подожди...");
             return;
         }
-        let ans = unsafe {
-            iv::DialogSynchro(
-                iv::ICON_QUESTION,
-                cstring("WiFi").as_ptr(),
-                cstring("Включить WiFi и запустить сервер файлов?").as_ptr(),
-                cstring("Да").as_ptr(),
-                cstring("Нет").as_ptr(),
-                std::ptr::null(),
-            )
-        };
-        log_line(&format!("wifi prompt answer={ans}"));
-        if ans != 1 {
-            return;
+        #[cfg(not(feature = "pro903"))]
+        {
+            let ans = unsafe {
+                iv::DialogSynchro(
+                    iv::ICON_QUESTION,
+                    cstring("WiFi").as_ptr(),
+                    cstring("Включить WiFi и запустить сервер файлов?").as_ptr(),
+                    cstring("Да").as_ptr(),
+                    cstring("Нет").as_ptr(),
+                    std::ptr::null(),
+                )
+            };
+            log_line(&format!("wifi prompt answer={ans}"));
+            if ans != 1 {
+                return;
+            }
+            begin_connect(st);
         }
+        #[cfg(feature = "pro903")]
+        {
+            // FW2 has no blocking DialogSynchro: show the async prompt and
+            // continue in dialog_cb (GUI thread) when the user answers.
+            unsafe {
+                iv::Dialog(
+                    iv::ICON_QUESTION,
+                    cstring("WiFi").as_ptr(),
+                    cstring("Включить WiFi и запустить сервер файлов?").as_ptr(),
+                    cstring("Да").as_ptr(),
+                    cstring("Нет").as_ptr(),
+                    Some(dialog_cb),
+                );
+            }
+            log_line("wifi prompt shown (async, FW2)");
+        }
+    }
+
+    /// OK/MENU global toggle: START when idle, real STOP when serving.
+    /// (Previously keys could only start; stopping needed a tap.)
+    fn toggle_server(st: &Arc<Mutex<UiState>>, server_on: bool) {
+        if server_on {
+            stop_server(st);
+        } else {
+            press_start(st);
+        }
+    }
+
+    /// Shared START prelude once the user said Yes (blocking prompt on
+    /// FW5/6, async dialog_cb on FW2): flag + paint, then the worker.
+    fn begin_connect(st: &Arc<Mutex<UiState>>) {
         if let Ok(mut s) = st.lock() {
+            if s.server_on || s.wifi_connecting {
+                return;
+            }
             s.wifi_connecting = true;
             s.message = "Запуск...".into();
             // state + message lines only (dialog follows, its close path
@@ -961,6 +1075,19 @@ mod device {
         wifi_and_serve(st.clone());
     }
 
+    /// FW2 async WiFi-prompt answer (runs on the GUI thread).
+    /// Button 1 = "Да" → same prelude as the blocking prompt elsewhere.
+    #[cfg(feature = "pro903")]
+    unsafe extern "C" fn dialog_cb(button: i32) {
+        log_line(&format!("wifi prompt answer={button}"));
+        if button != 1 {
+            return;
+        }
+        if let Some(st) = STATE.get().cloned() {
+            begin_connect(&st);
+        }
+    }
+
     fn exit_app(_s: &UiState) {
         log_line("exit: scan broadcast + rescan + CloseApp");
         // The scan outlives us: scanner.app is a resident service, so the
@@ -973,13 +1100,24 @@ mod device {
         }
     }
 
-    /// Online = NetInfo()->connected ONLY. QueryNetwork() has undocumented
+    /// Online check.
+    /// FW5/6: NetInfo()->connected ONLY. QueryNetwork() has undocumented
     /// semantics (nonzero even when offline) and must not gate connecting.
+    /// Pro 903 / FW2: iv_netinfo is opaque in the old headers, so NetInfo
+    /// is never touched — QueryNetwork() is the signal, and the blocking
+    /// NetConnect return code is authoritative (see the worker below).
+    #[cfg(not(feature = "pro903"))]
     fn online() -> bool {
         iv::netinfo_connected().unwrap_or(false)
     }
+    #[cfg(feature = "pro903")]
+    fn online() -> bool {
+        unsafe { iv::QueryNetwork() != 0 }
+    }
 
     /// One-line dump of NetInfo + interfaces for the log.
+    /// FW5/6 only — see the pro903 variant below.
+    #[cfg(not(feature = "pro903"))]
     fn net_dump() -> String {
         let mut out = String::new();
         match iv::netinfo_full() {
@@ -1012,6 +1150,26 @@ mod device {
         out
     }
 
+    /// Pro 903 / FW2: NetInfo layout unknown → skipped; QueryNetwork +
+    /// interfaces only. Enough to diagnose connect failures from pbweb.log.
+    #[cfg(feature = "pro903")]
+    fn net_dump() -> String {
+        let q = unsafe { iv::QueryNetwork() };
+        let base = format!("query_network={q} netinfo=SKIPPED(FW2)");
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(rd) = std::fs::read_dir("/sys/class/net") {
+                let mut ifs: Vec<String> = rd
+                    .flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect();
+                ifs.sort();
+                return format!("{base} ifs={}", ifs.join(","));
+            }
+        }
+        base
+    }
+
     /// Non-blocking wifi flow in a worker thread. NEVER calls blocking
     /// NetConnect*: silent attempt, then NetConnectAsync + poll NetInfo
     /// with a 45s cap. UI updates go through shared state + SendEvent.
@@ -1039,11 +1197,24 @@ mod device {
                     match iv::net_connect_async(net_cb) {
                         Some(rc) => log_line(&format!("worker: async started rc={rc}")),
                         None => {
-                            log_line("worker: NetConnectAsync missing!");
-                            set_text(&st2, "Нет WiFi. Подключись в настройках и нажми СТАРТ.");
+                            // FW2 (Pro 903): no async API at all. Blocking
+                            // NetConnect(NULL) is safe here — this IS the
+                            // worker thread, the e-ink UI never hangs.
+                            log_line("worker: NetConnectAsync missing, legacy blocking NetConnect...");
+                            set_text(&st2, "Подключение к WiFi...");
                             request_partial(&st2, pb_ui::Dirty::Message);
-                            finish_connecting(&st2);
-                            return;
+                            let rc = unsafe { iv::NetConnect(std::ptr::null()) };
+                            log_line(&format!("worker: legacy NetConnect rc={rc}"));
+                            if rc != 0 && !online() {
+                                log_line(&format!("worker: legacy connect failed: {}", net_dump()));
+                                set_text(
+                                    &st2,
+                                    "Нет WiFi. Подключись в настройках и нажми СТАРТ.",
+                                );
+                                request_partial(&st2, pb_ui::Dirty::Message);
+                                finish_connecting(&st2);
+                                return;
+                            }
                         }
                     }
                     // poll up to ~45s
@@ -1144,7 +1315,8 @@ mod device {
         std::panic::set_hook(Box::new(|info| {
             log_line(&format!("PANIC: {info}"));
         }));
-        log_line("pbweb 0.2.7 starting");
+        let tag = if cfg!(feature = "pro903") { " (pro903)" } else { "" };
+        log_line(&format!("pbweb {} starting{tag}", env!("CARGO_PKG_VERSION")));
         let _ = HANDLER_FN.set(handler);
         let state = Arc::new(Mutex::new(UiState::default()));
         let _ = STATE.set(state);
@@ -1200,6 +1372,8 @@ fn filetime_touch(path: &str, _now: std::time::SystemTime) -> std::io::Result<()
 
 /// Parse the library scan policy from global.cfg content.
 /// Format is `scanmode=N` lines (0=Off, 1=Once, 2=Auto); first match wins.
+/// (pro903 builds never read it on-device; kept for the host unit test.)
+#[cfg(any(test, not(feature = "pro903")))]
 fn parse_scanmode(content: &str) -> Option<i32> {
     for line in content.lines() {
         let t = line.trim().trim_start_matches(['#', ';']).trim_start();

@@ -1,12 +1,18 @@
-# Host builds use default linker. PocketBook cross builds happen INSIDE container.
-# Target CPU PocketBook Color 633 (Yitoa) ~ Cortex-A7.
-[build]
+# Host builds use default linker. PocketBook cross builds happen INSIDE containers.
+# NOTE: the 633 (FW6) and Pro 903 (FW2) builds share the
+# `arm-unknown-linux-gnueabi` triple, so per-device knobs live in the
+# build-*.sh scripts, not here:
+# - CPU tuning comes from RUSTFLAGS exported by each script
+#   (cortex-a7 for 633, arm1176jzf-s for Pro 903).
+# - The 903 script additionally overrides the linker via
+#   CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABI_LINKER (FRSCSDK gcc)
+#   and appends its stub-lib -L path via RUSTFLAGS.
+# [build]
 # do NOT force target globally: host `cargo test` must stay on x86_64.
 
 [target.arm-unknown-linux-gnueabi]
 linker = "arm-obreey-linux-gnueabi-clang"
 rustflags = [
-  "-C", "target-cpu=cortex-a7",
   "-C", "link-arg=-linkview",
   "-C", "link-arg=-lpthread",
 ]

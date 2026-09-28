@@ -42,6 +42,11 @@ pub const KEY_NEXT: c_int = 0x19;
 pub const KEY_BACK: c_int = 0x1b;
 pub const KEY_OK: c_int = 0x0a;
 pub const KEY_MENU: c_int = 0x17;
+// D-pad (identical codes on FW2 and FW6 headers, verified against FRSCSDK).
+pub const KEY_UP: c_int = 0x11;
+pub const KEY_DOWN: c_int = 0x12;
+pub const KEY_LEFT: c_int = 0x13;
+pub const KEY_RIGHT: c_int = 0x14;
 
 pub const BLACK: c_int = 0x000000;
 pub const DGRAY: c_int = 0x555555;
@@ -108,6 +113,9 @@ extern "C" {
     ) -> *mut c_char;
     pub fn DrawString(x: c_int, y: c_int, s: *const c_char);
     pub fn Message(icon: c_int, title: *const c_char, text: *const c_char, timeout: c_int);
+    /// Blocking Yes/No prompt. FW 4.8.1+: ABSENT on FW2 (Pro 903 has only
+    /// the async Dialog below) — hard-linking it would crash at load there.
+    #[cfg(not(feature = "pro903"))]
     pub fn DialogSynchro(
         icon: c_int,
         title: *const c_char,
@@ -116,6 +124,18 @@ extern "C" {
         b2: *const c_char,
         b3: *const c_char,
     ) -> c_int;
+    /// FW2-era async prompt (the only one on Pro 903). Returns immediately;
+    /// the pressed button (1/2/...) arrives later via `hproc` on the GUI
+    /// thread. Also present on FW5/6, but only used for pro903 builds.
+    #[cfg(feature = "pro903")]
+    pub fn Dialog(
+        icon: c_int,
+        title: *const c_char,
+        text: *const c_char,
+        b1: *const c_char,
+        b2: *const c_char,
+        hproc: Option<unsafe extern "C" fn(c_int)>,
+    );
     pub fn QueryNetwork() -> c_int;
     pub fn NetConnect(name: *const c_char) -> c_int;
     pub fn NetDisconnect();
@@ -128,6 +148,9 @@ extern "C" {
     /// Deliver an event to another task by id (symbol verified present in
     /// 6.5 libinkview via nm). Used for the EVT_STARTSCAN broadcast to the
     /// resident scanner.app service.
+    /// Not referenced by pro903 builds at all: FW2 has no scanner.app
+    /// broadcast service, so we don't even hard-link it there.
+    #[cfg(not(feature = "pro903"))]
     pub fn SendEventTo(task: c_int, t: c_int, p1: c_int, p2: c_int) -> c_int;
 }
 
@@ -340,6 +363,8 @@ mod opt {
 
     /// Nonzero while scanner.app is running a library scan. None if the
     /// symbol is missing (pure diagnostic helper, plain aligned loads).
+    /// pro903: never peek — the offsets below are FW5/6-specific.
+    #[cfg(not(feature = "pro903"))]
     pub fn scan_flag() -> Option<bool> {
         let base = ivmpc_base();
         if base.is_null() {
@@ -347,15 +372,25 @@ mod opt {
         }
         Some(unsafe { (base.add(IVMPC_SCAN_FLAG_OFF) as *const i16).read_unaligned() } != 0)
     }
+    #[cfg(feature = "pro903")]
+    pub fn scan_flag() -> Option<bool> {
+        None
+    }
 
     /// DB-changes counter bumped by the scanner. Compare before/after a
     /// scan broadcast to prove the library DB actually changed.
+    /// pro903: no scanner service on FW2, always None.
+    #[cfg(not(feature = "pro903"))]
     pub fn db_changes() -> Option<u32> {
         let base = ivmpc_base();
         if base.is_null() {
             return None;
         }
         Some(unsafe { (base.add(IVMPC_DB_CHANGES_OFF) as *const u32).read_unaligned() })
+    }
+    #[cfg(feature = "pro903")]
+    pub fn db_changes() -> Option<u32> {
+        None
     }
 }
 

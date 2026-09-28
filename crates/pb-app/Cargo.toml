@@ -1,6 +1,6 @@
 [package]
 name = "pbweb-app"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2021"
 
 [[bin]]
@@ -10,6 +10,12 @@ path = "src/main.rs"
 [features]
 default = []
 device = ["pb-sys/device"]
+# Pro 903 / FW2 build: legacy WiFi path, no library-scan broadcast,
+# async WiFi prompt (no DialogSynchro on FW2). Implies pb-sys/pro903.
+pro903 = ["pb-sys/pro903"]
+# Button-first wording (hints describe keys, not taps). On by default
+# for touch-less readers; the 903 build enables it alongside pro903.
+keyonly = []
 
 [dependencies]
 pb-sys = { path = "../pb-sys" }

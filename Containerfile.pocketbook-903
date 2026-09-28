@@ -1,0 +1,38 @@
+# PocketBook Pro 903 (FW2) toolchain: FRSCSDK (gcc 4.1.2, glibc 2.5, armv5te)
+# + Rust cross toolchain targeting arm-unknown-linux-gnueabi / ARM1176JZF-S.
+# Build: podman build -f Containerfile.pocketbook-903 -t pbweb-sdk-903 .
+# Run:   podman run --rm -v .:/work -w /work pbweb-sdk-903 sh build-pocketbook-903.sh
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PBSDK_ROOT=/opt/pbsdk/FRSCSDK
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git ca-certificates curl \
+    build-essential \
+    libc6-i386 \
+    file \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- FRSCSDK (FW2/FW4-era SDK: CodeSourcery gcc 4.1.2 + glibc 2.5) ---
+# NOTE: it ships headers but NO ARM libinkview.so — the real library is only
+# on the device. build-pocketbook-903.sh generates a link-time stub for it
+# (same trick as fstanis/pocketbook-sdk-qt6 for FW6).
+RUN mkdir -p /opt && \
+    git clone --depth 1 https://github.com/blchinezu/pocketbook-sdk.git /opt/pbsdk && \
+    ls /opt/pbsdk/FRSCSDK/bin | head -n 20
+
+# --- Rust ---
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable && \
+    /root/.cargo/bin/rustup target add arm-unknown-linux-gnueabi
+
+ENV PATH="/root/.cargo/bin:/opt/pbsdk/FRSCSDK/bin:${PATH}"
+WORKDIR /work
+
+# Fail fast with a clear message if the 32-bit cross gcc cannot start
+# (missing ia32 compat: libc6-i386) or the relocated toolchain cannot
+# find its ARM libc. A plain hello-world proves the full compile+link path.
+RUN arm-none-linux-gnueabi-gcc --version && \
+    echo 'int main(void){return 0;}' > /tmp/t.c && \
+    arm-none-linux-gnueabi-gcc /tmp/t.c -o /tmp/t-arm && \
+    file /tmp/t-arm && rm /tmp/t.c /tmp/t-arm

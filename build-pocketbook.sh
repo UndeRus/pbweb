@@ -7,6 +7,9 @@ set -eu
 SDK_SYSROOT="$SDK_ROOT_DIR/SDK-B288/usr/arm-obreey-linux-gnueabi/sysroot"
 export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$SDK_SYSROOT -I$SDK_SYSROOT/usr/include/freetype2"
 export PATH="$SDK_ROOT_DIR/SDK-B288/usr/bin:$PATH"
+# CPU tuning lives here (not .cargo/config.toml): the 633 build shares its
+# target triple with the Pro 903 build, which needs ARMv6 instead.
+export RUSTFLAGS="-C target-cpu=cortex-a7"
 echo "SDK_ROOT_DIR=$SDK_ROOT_DIR"
 which arm-obreey-linux-gnueabi-clang
 # fail fast: old SDK wrapper needs libtinfo.so.5 compat (see Containerfile)

@@ -39,6 +39,75 @@ podman run --rm -v ${PWD}:/work -w /work pbweb-sdk sh build-pocketbook.sh
 # -> target/pbweb.app  (copy to /mnt/ext1/applications/pbweb.app on reader)
 ```
 
+## Pro 903 build (separate artifact, FW2 / ARMv6)
+
+Pro 903 (Samsung S3C6410 = ARM1176JZF-S, 1200x825 landscape, стилус,
+прошивка 2.x) не может запускать бинарь под 633: другой CPU (ARMv6 vs
+Cortex-A7), другой glibc (2.5) и другой InkView (нет `DialogSynchro`,
+`NetConnectAsync`, `NetInfo`, скана библиотеки через `EVT_STARTSCAN`).
+Поэтому для него отдельный контейнер со старым FRSCSDK
+(gcc 4.1.2 + glibc 2.5) и отдельный артефакт:
+
+```powershell
+podman build -f Containerfile.pocketbook-903 -t pbweb-sdk-903 .
+podman run --rm -v ${PWD}:/work -w /work pbweb-sdk-903 sh build-pocketbook-903.sh
+# -> target/pbweb-903.app  (copy to /mnt/ext1/applications/pbweb-903.app)
+```
+
+Техника: фичи `pbweb-app/device,pro903,keyonly` — Rust-код под
+`arm1176jzf-s`, линкер `arm-none-linux-gnueabi-gcc`, `libinkview.so`
+подменяется link-time заглушкой (реальная линкуется на устройстве при
+загрузке; `DialogSynchro`/`SendEventTo` в заглушке специально нет —
+линковка громко упадет, если код их заденет). CPU/линкер задаются в
+`build-pocketbook-903.sh`, а не в `.cargo/config.toml`: оба билда делят
+триплет `arm-unknown-linux-gnueabi`.
+
+glibc 2.5 против современного Rust std: в `build-pocketbook-903.sh`
+вшиты compat-шимы (`accept4` через `accept`+`fcntl`, `getauxval` через
+`/proc/self/auxv`, `pthread_setname_np` как no-op, `_Unwind_Backtrace`
+как заглушка — бэктрейсы не используются, `panic=abort`). Проверено:
+интерпретатор `/lib/ld-linux.so.3`, NEEDED только era-библиотеки
+(`libinkview`, `libdl`, `libgcc_s`, `librt`, `libpthread`, `libc`),
+FW6-символов в импортах нет (smoke-тест в скрипте), ARMv7-инструкций
+(`movw/movt`) в коде нет (единственное срабатывание скана — байты
+строки `..._BAC[RUST...]` в пуле литералов, не инструкция).
+
+Отличия 903-сборки (проверено по заголовкам FRSCSDK `inkview.new.h`):
+
+- WiFi: только блокирующий `NetConnect(NULL)` в воркере (+ `silent`,
+  если прошивка его экспортирует); состояние — по `QueryNetwork()`,
+  `NetInfo` не трогаем (в старых заголовках структура opaque).
+- Промпт WiFi — асинхронный `Dialog` + колбэк (блокирующего
+  `DialogSynchro` на FW2 нет).
+- СТОП/ВЫХОД не шлют `EVT_STARTSCAN` (сервиса сканера на FW2 нет) —
+  файлы все равно сразу на диске, Библиотеку обновить вручную.
+- Сетевые события `EVT_NET_*` на FW2 не приходят — только поллинг.
+
+## Управление только кнопками (все сборки)
+
+Каждое действие нижней панели доступно с клавиш — маршрутизация в
+`pb-ui::key_action` (чистая функция + хост-тесты `cargo test -p pb-ui`):
+
+| Клавиша | Status / Log | Files |
+|---|---|---|
+| MENU | СТАРТ/СТОП-тоггл (везде) | СТАРТ/СТОП-тоггл |
+| OK | СТАРТ/СТОП-тоггл | войти в папку (= тап по строке) |
+| LEFT / RIGHT | смена таба | вверх / войти |
+| UP / DOWN | переход к Files | движение селекции |
+| PREV / NEXT | смена таба | страница вверх/вниз |
+| BACK | ВЫХОД | ВВЕРХ; в корне → Status; повторный BACK → ВЫХОД |
+
+Фича `keyonly` (включена в 903-билд) меняет подсказки на кнопочные
+формулировки; сам роутинг клавиш работает во всех сборках, включая 633.
+
+Полевая проверка 903 (без стилуса, только кнопки + `pbweb.log`):
+Status OK → старт → OK → стоп; Files UP/DOWN + OK + BACK до корня →
+Status → BACK выход; PREV/NEXT листают. Прислать
+`/mnt/ext1/pbweb.log` — там коды клавиш, шаги WiFi и `query_network=`.
+Дополнительно с устройства (для закрытия рисков): `ls /lib/libgcc_s*`
+(бинарь линкует `libgcc_s.so.1` динамически) и вывод
+`ls /usr/local/lib/libinkview*` (против какой библиотеки линкуемся).
+
 ## Install on reader (+ icon)
 
 1. Copy `target/pbweb.app` → `/mnt/ext1/applications/pbweb.app`.

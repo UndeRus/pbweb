@@ -7,3 +7,6 @@ description = "Minimal hand-written FFI for PocketBook InkView (no bindgen, port
 [features]
 default = []
 device = []  # enable only when linking against real libinkview on device target
+# Pro 903 / FW2: drops hard links to symbols the old libinkview lacks
+# (DialogSynchro, SendEventTo) and avoids the FW5/6-only NetInfo layout.
+pro903 = []

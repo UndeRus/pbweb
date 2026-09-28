@@ -210,6 +210,68 @@ pub fn hit_button(btns: &[Btn], x: i32, y: i32) -> Option<BtnId> {
         .map(|b| b.id)
 }
 
+// ---- Button-only key routing (pure, host-testable) ----
+//
+// Every bottom-bar action is reachable by keys, so touch-less readers
+// (and a Pro 903 with its stylus parked) stay fully usable:
+// - MENU toggles the server from anywhere; OK does it on Status/Log.
+// - In Files, OK/RIGHT enters the directory (= tap on its row),
+//   LEFT/BACK goes up (at root: back to Status), UP/DOWN moves,
+//   PREV/NEXT flips pages.
+// Key codes come from pb-sys (identical on FW2 and FW6 headers).
+
+/// Actions the GUI handler takes for a key press.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyAction {
+    /// START when stopped, STOP when running.
+    ToggleServer,
+    NextTab,
+    PrevTab,
+    /// Move file selection by delta rows (also used outside Files:
+    /// the handler jumps to the Files tab first, like before).
+    MoveSel(isize),
+    /// Flip the file list by delta pages.
+    Page(isize),
+    /// Enter the directory under the selection (= tap on its row).
+    Enter,
+    /// Up one directory; at root the handler goes to Status instead.
+    Up,
+    Exit,
+    /// No binding.
+    None,
+}
+
+pub fn key_action(tab: Tab, key: i32) -> KeyAction {
+    use pb_sys::{
+        KEY_BACK, KEY_DOWN, KEY_LEFT, KEY_MENU, KEY_NEXT, KEY_OK, KEY_PREV, KEY_RIGHT, KEY_UP,
+    };
+    use KeyAction::*;
+    // MENU = global server toggle (START/STOP) from any tab.
+    if key == KEY_MENU {
+        return ToggleServer;
+    }
+    match tab {
+        Tab::Status | Tab::Log => match key {
+            KEY_OK => ToggleServer,
+            KEY_PREV | KEY_LEFT => PrevTab,
+            KEY_NEXT | KEY_RIGHT => NextTab,
+            KEY_UP => MoveSel(-1),
+            KEY_DOWN => MoveSel(1),
+            KEY_BACK => Exit,
+            _ => None,
+        },
+        Tab::Files => match key {
+            KEY_OK | KEY_RIGHT => Enter,
+            KEY_LEFT | KEY_BACK => Up,
+            KEY_UP => MoveSel(-1),
+            KEY_DOWN => MoveSel(1),
+            KEY_PREV => Page(-1),
+            KEY_NEXT => Page(1),
+            _ => None,
+        },
+    }
+}
+
 // ---- QR code layout (server URL on the status screen) ----
 
 /// Modules of quiet zone around the code (spec minimum is 4).
@@ -611,5 +673,41 @@ mod tests {
         assert_eq!(a.union(&b), Rect { x: 10, y: 10, w: 35, h: 35 });
         assert_eq!(Rect { x: -5, y: 1400, w: 2000, h: 200 }.clamp_to(1072, 1448),
             Rect { x: 0, y: 1400, w: 1072, h: 48 });
+    }
+    #[test]
+    fn key_routing_covers_every_action() {
+        use pb_sys::{
+            KEY_BACK, KEY_DOWN, KEY_LEFT, KEY_MENU, KEY_NEXT, KEY_OK, KEY_PREV, KEY_RIGHT, KEY_UP,
+        };
+        use KeyAction::*;
+        // MENU toggles the server from any tab.
+        for tab in [Tab::Status, Tab::Files, Tab::Log] {
+            assert_eq!(key_action(tab, KEY_MENU), ToggleServer);
+        }
+        // Status/Log: OK toggles, PREV/NEXT + LEFT/RIGHT switch tabs,
+        // BACK exits, UP/DOWN hands over to the Files tab.
+        for tab in [Tab::Status, Tab::Log] {
+            assert_eq!(key_action(tab, KEY_OK), ToggleServer);
+            assert_eq!(key_action(tab, KEY_PREV), PrevTab);
+            assert_eq!(key_action(tab, KEY_LEFT), PrevTab);
+            assert_eq!(key_action(tab, KEY_NEXT), NextTab);
+            assert_eq!(key_action(tab, KEY_RIGHT), NextTab);
+            assert_eq!(key_action(tab, KEY_BACK), Exit);
+            assert_eq!(key_action(tab, KEY_UP), MoveSel(-1));
+            assert_eq!(key_action(tab, KEY_DOWN), MoveSel(1));
+        }
+        // Files: full file-manager control without touch.
+        assert_eq!(key_action(Tab::Files, KEY_OK), Enter);
+        assert_eq!(key_action(Tab::Files, KEY_RIGHT), Enter);
+        assert_eq!(key_action(Tab::Files, KEY_LEFT), Up);
+        assert_eq!(key_action(Tab::Files, KEY_BACK), Up);
+        assert_eq!(key_action(Tab::Files, KEY_UP), MoveSel(-1));
+        assert_eq!(key_action(Tab::Files, KEY_DOWN), MoveSel(1));
+        assert_eq!(key_action(Tab::Files, KEY_PREV), Page(-1));
+        assert_eq!(key_action(Tab::Files, KEY_NEXT), Page(1));
+        // Unknown keys are ignored everywhere.
+        for tab in [Tab::Status, Tab::Files, Tab::Log] {
+            assert_eq!(key_action(tab, 0x7f), None);
+        }
     }
 }
