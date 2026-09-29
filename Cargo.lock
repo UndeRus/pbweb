@@ -138,7 +138,7 @@ dependencies = [
 
 [[package]]
 name = "pb-server"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "mime_guess",
  "pb-core",
@@ -163,7 +163,7 @@ dependencies = [
 
 [[package]]
 name = "pbweb-app"
-version = "0.2.8"
+version = "0.2.10"
 dependencies = [
  "pb-core",
  "pb-server",

@@ -282,10 +282,12 @@ mod device {
     fn paint_status(state: &mut UiState, w: i32, h: i32) {
         paint_title_block(w);
         paint_head(state, w, h);
-        // QR size: encode once, cache in layout math
+        // QR size: encode once, cache in layout math.
+        // The QR carries the paired URL (?token=) so a scan lands
+        // straight in the session, no manual PIN entry.
         let mut qr_size = 0;
         if state.server_on && usable_ip(&state.ip) {
-            if let Ok(code) = qrcode::QrCode::new(state.url().as_bytes()) {
+            if let Ok(code) = qrcode::QrCode::new(state.url_with_token().as_bytes()) {
                 let modules = code.width() as i32;
                 // reserve room for the hint line + upload block + message
                 let max_h = h - pb_ui::BOTTOM_H - 260 - 410;
@@ -318,7 +320,7 @@ mod device {
         let show_qr = state.server_on && usable_ip(&state.ip) && qr_size > 0;
         let l = pb_ui::status_layout(w, h, if show_qr { qr_size } else { 0 }, false, false);
         if show_qr {
-            if let Ok(code) = qrcode::QrCode::new(state.url().as_bytes()) {
+            if let Ok(code) = qrcode::QrCode::new(state.url_with_token().as_bytes()) {
                 let modules = code.width() as i32;
                 let scale = qr_size / (modules + 2 * pb_ui::QR_QUIET);
                 if scale >= 1 {
@@ -338,7 +340,15 @@ mod device {
                             }
                         }
                         with_font(F_TITLE, iv::BLACK, |_| unsafe {
-                            let hint = cstring("Отсканируй камерой телефона");
+                            let hint = if state.auth_token.is_empty() {
+                                "Отсканируй камерой телефона".to_owned()
+                            } else {
+                                format!(
+                                    "Отсканируй камерой • Код {}",
+                                    group_pin(&state.auth_token)
+                                )
+                            };
+                            let hint = cstring(&hint);
                             iv::DrawTextRect(
                                 l.mid.x, l.mid.y + qr_size + 8, l.mid.w, 44,
                                 hint.as_ptr(), iv::ALIGN_CENTER,
@@ -442,6 +452,15 @@ mod device {
     /// IP is usable for a QR/link when it looks like a real address.
     fn usable_ip(ip: &str) -> bool {
         !(ip.is_empty() || ip == "?" || ip == "-") && ip.contains('.')
+    }
+
+    /// Group a 6-digit PIN for the e-ink screen: "123456" -> "123 456".
+    fn group_pin(pin: &str) -> String {
+        if pin.len() == 6 {
+            format!("{} {}", &pin[..3], &pin[3..])
+        } else {
+            pin.to_owned()
+        }
     }
 
     fn list_current_dir(dir: &str) -> Vec<pb_core::FileEntry> {
@@ -924,6 +943,7 @@ mod device {
         if let Ok(mut s) = st.lock() {
             s.server_on = false;
             s.wifi_connecting = false;
+            s.auth_token.clear();
             #[cfg(not(feature = "pro903"))]
             {
                 s.library_scanning = true;
@@ -1175,8 +1195,11 @@ mod device {
     /// with a 45s cap. UI updates go through shared state + SendEvent.
     fn wifi_and_serve(st: Arc<Mutex<UiState>>) {
         let st2 = st.clone();
+        // Small explicit stack: the device has ~256MB RAM total and the
+        // worker only does sequential I/O + small buffers.
         let spawn = std::thread::Builder::new()
             .name("pbweb-wifi".into())
+            .stack_size(512 * 1024)
             .spawn(move || {
                 iv::postpone_poweroff();
                 log_line(&format!("worker start: {}", net_dump()));
@@ -1184,6 +1207,7 @@ mod device {
                     // 1) silent attempt: no dialogs, quick
                     set_text(&st2, "Подключение к WiFi...");
                     request_partial(&st2, pb_ui::Dirty::Message);
+                    log_line("worker: calling NetConnectSilent...");
                     match iv::net_connect_silent() {
                         Some(rc) => log_line(&format!("worker: silent rc={rc}")),
                         None => log_line("worker: NetConnectSilent missing"),
@@ -1203,6 +1227,7 @@ mod device {
                             log_line("worker: NetConnectAsync missing, legacy blocking NetConnect...");
                             set_text(&st2, "Подключение к WiFi...");
                             request_partial(&st2, pb_ui::Dirty::Message);
+                            log_line("worker: calling legacy NetConnect(NULL)...");
                             let rc = unsafe { iv::NetConnect(std::ptr::null()) };
                             log_line(&format!("worker: legacy NetConnect rc={rc}"));
                             if rc != 0 && !online() {
@@ -1272,15 +1297,19 @@ mod device {
                             s.wifi_connecting = false;
                             s.ip = ip;
                             s.port = port;
+                            s.auth_token = srv.auth_token.clone();
                             s.message = "Сервер запущен".into();
+                            s.server_generation = s.server_generation.wrapping_add(1);
                         }
                         request_redraw();
+                        spawn_idle_watchdog(st2.clone(), srv.clone());
                         srv.run_shared(&http); // blocks until shutdown()/exit
                         log_line("worker: serve loop ended");
                         // stopped via СТОП (or socket died): back to idle
                         if let Ok(mut s) = st2.lock() {
                             s.server_on = false;
                             s.wifi_connecting = false;
+                            s.auth_token.clear();
                             if s.message == "Сервер запущен" {
                                 s.message = "Сервер остановлен".into();
                             }
@@ -1301,6 +1330,45 @@ mod device {
             request_partial(&st, pb_ui::Dirty::Message);
             finish_connecting(&st);
         }
+    }
+
+    /// Idle watchdog: stops a forgotten server after IDLE_TIMEOUT_MS of
+    /// no requests (and no active upload). GUI work stays on the GUI
+    /// thread — here only state + SendEvent. Dies with stale generations.
+    fn spawn_idle_watchdog(st: Arc<Mutex<UiState>>, srv: Arc<Server>) {
+        const IDLE_TIMEOUT_MS: u64 = 15 * 60 * 1000;
+        let gen = st
+            .lock()
+            .map(|s| s.server_generation)
+            .unwrap_or(u64::MAX);
+        std::thread::Builder::new()
+            .name("pbweb-idle".into())
+            .stack_size(256 * 1024)
+            .spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(30));
+                let cur_gen = st.lock().map(|s| s.server_generation).unwrap_or(u64::MAX);
+                if cur_gen != gen || !srv.is_live() {
+                    break; // superseded or already stopped
+                }
+                let idle =
+                    pb_server::now_ms().saturating_sub(srv.stats.last_activity_ms.load(Ordering::Relaxed));
+                let uploading = srv.stats.upload.active.load(Ordering::Relaxed);
+                if !uploading && idle > IDLE_TIMEOUT_MS {
+                    log_line("idle watchdog: stopping forgotten server");
+                    srv.shutdown();
+                    fire_scan_broadcast();
+                    if let Ok(mut s) = st.lock() {
+                        s.server_on = false;
+                        s.wifi_connecting = false;
+                        s.auth_token.clear();
+                        s.library_scanning = true;
+                        s.message = "Остановлен по таймеру. Обновляю библиотеку...".into();
+                    }
+                    request_redraw();
+                    break;
+                }
+            })
+            .ok();
     }
 
     fn finish_connecting(st: &Arc<Mutex<UiState>>) {
@@ -1403,6 +1471,7 @@ fn main() {
         };
         let srv = Server::new(roots);
         println!("host dev server: see http://127.0.0.1:8080");
+        println!("host dev pairing PIN: {}", srv.auth_token);
         let _ = srv.serve(8080);
     }
 }

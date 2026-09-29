@@ -26,9 +26,10 @@ web/index.html  embedded via include_str!
 ```powershell
 cargo test --workspace
 cargo run -p pbweb-app
+# pairing PIN is printed to the console on start
 # open http://127.0.0.1:8080  (serves repo dir)
-curl.exe -F "files=@book.epub" "http://127.0.0.1:8080/api/upload?path=int:/"
-curl.exe "http://127.0.0.1:8080/api/download?path=int:/book.epub" -o out.epub
+curl.exe -F "files=@book.epub" "http://127.0.0.1:8080/api/upload?path=int:/&token=123456"
+curl.exe "http://127.0.0.1:8080/api/download?path=int:/book.epub&token=123456" -o out.epub
 ```
 
 ## Cross build (Podman)
@@ -127,7 +128,8 @@ Status → BACK выход; PREV/NEXT листают. Прислать
 Device run: open `pbweb.app` → big СТАРТ button (or MENU key) → Yes in the
 WiFi prompt → non-blocking connect (silent first, then async, 45s cap with
 countdown) → huge URL + QR code underneath (scan with phone camera to open
-the upload page), + steps on screen when idle. All in Russian, all actions are
+the upload page, already paired), + 6-digit PIN on screen for manual entry,
++ steps on screen when idle. All in Russian, all actions are
 big touch buttons: СТАРТ/СТОП, middle button named after the tab it
 opens (ФАЙЛЫ/ЖУРНАЛ/СТАТУС), ВЫХОД; tapping a file row opens it.
 
@@ -164,23 +166,48 @@ WiFi steps, panics). If something crashes, send this file — it tells exactly w
 
 ## API
 
+All `/api/*` require the pairing PIN (`?token=` or `X-Auth-Token`), else 401.
+
 - `GET /` , `GET /files` — web UI (SPA: Home + File Manager)
 - `GET /api/status` — `{"version","ip","mode","device","wifi","roots"}`
 - `GET /api/roots` — `{"internal":true,"sdcard":bool}`
-- `GET /api/files?path=int:/books` or `sd:/...`
+- `GET /api/files?path=int:/books` or `sd:/...` (+ `q`, `sort=name|size|mtime`,
+  `order=asc|desc`, `limit` ≤1000, `offset`) → `{items, total, path, offset, limit}`
 - `GET /api/download?path=...`
 - `GET /api/zip?path=int:/dir` — folder as .zip (stored, 2000 files / 512MB caps)
 - `POST /api/mkdir` `{"path","name"}` / `POST /api/rename` `{"path","name"}`
 - `POST /api/move` `{"path","dest"}` (same root only)
 - `POST /api/delete` `{"path"}` or `{"paths":[...]}` (files + empty folders only)
 - `POST /api/upload?path=int:/dir` multipart `files=@...` (512MB cap)
+- `POST /api/exists` `{"dir","names":[...]}` → `{"exists":[...]}` (overwrite check)
+
+## Security model (0.3.0+)
+
+- **Pairing PIN, not a password.** Every СТАРТ generates a fresh random 6-digit
+  PIN (`/dev/urandom`, std-only) shown on the e-ink screen next to the URL;
+  the QR encodes the URL with `?token=` so a scan lands straight in. STOP
+  invalidates it. No password to forget, nothing stored.
+- **Everything under `/api/` requires the PIN** (`?token=` for links/QR,
+  `X-Auth-Token` for fetch) with constant-time compare, otherwise 401.
+  Wrong guesses count towards a progressive block (5 free, then 30s doubling
+  up to 10 min) — the 6-digit space can't be brute-forced over LAN.
+- **Mutations are JSON-only + same-origin checked**: urlencoded fallback
+  removed, so plain cross-site form POSTs can't drive the API; a present
+  `Origin`/`Referer` must match the server's own `Host`.
+- **Confinement**: roots are canonicalized (`canonicalize` + prefix check),
+  symlinks are rejected, storage roots can't be renamed/moved/deleted/zipped;
+  upload names reject control characters and >255B.
+- **Bounded resources**: uploads stream to `.part` files (RAM stays flat),
+  512MB/req cap enforced pre-read via `Content-Length`; zips stream from a
+  temp file on flash (deleted after the transfer), 512MB/2000 files caps.
+- **Fail closed**: OS error details stay in the device log (`/mnt/ext1/pbweb.log`
+  + Log tab), responses carry generic messages; server runs only while you
+  explicitly started it, plus 15-min idle auto-stop.
+- **Deliberately HTTP** (trusted LAN): no TLS theater without a PKI; the PIN
+  is shown out-of-band on the e-ink screen, not typed over the network
+  except once per pairing inside your own WiFi.
 
 ## Notes / limits (v1)
 
 - IPs: shown as placeholder until first route; fill from your router's client list if `192.168.0.?`.
-  Improvement: read `NetInfo().prefix` via dlsym + `getifaddrs` — queued.
-- Library rescan: no public `RescanLibrary()` in 5.x/6.x headers found.
-  Current: `iv_sync()` + touch `explorer-3.db` mtime. Confirmed full rescan path needs
-  `strings libinkview.so` spike inside container (symbols `UpdateBookInfo*`, `Scan*`, `BookReady`).
-- Device UI v1: status screen + tabs state; Files/Log full on-device rendering is next.
-- Port: 8080..8090 auto-fallback. No auth in v1 — trusted LAN only.
+- Port: 8080..8090 auto-fallback.

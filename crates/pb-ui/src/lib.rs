@@ -18,6 +18,8 @@ pub struct UiState {
     pub ssid: String,
     pub ip: String,
     pub port: u16,
+    /// Pairing PIN shown on e-ink (empty = server idle). Fresh per СТАРТ.
+    pub auth_token: String,
     pub message: String,
     pub files_page: usize,
     pub current_dir: String,
@@ -36,6 +38,9 @@ pub struct UiState {
     /// Library rescan requested, completion (EVT_SCANSTOPPED) not seen yet.
     /// Guards against duplicate broadcasts and spurious stop events.
     pub library_scanning: bool,
+    /// Serve-session counter, bumped on every successful bind. Lets the
+    /// idle watchdog tell stale loops from the current server.
+    pub server_generation: u64,
 }
 
 impl Default for UiState {
@@ -45,9 +50,10 @@ impl Default for UiState {
             wifi_on: false,
             server_on: false,
             wifi_connecting: false,
-            ssid: String::new(),
-            ip: String::from("-"),
-            port: 8080,
+        ssid: String::new(),
+        ip: String::from("-"),
+        port: 8080,
+        auth_token: String::new(),
         message: String::from("Нажми СТАРТ"),
         files_page: 0,
         current_dir: String::from("int:/"),
@@ -58,6 +64,7 @@ impl Default for UiState {
         qr_size_px: 0,
         dirty: None,
         library_scanning: false,
+        server_generation: 0,
         }
     }
 }
@@ -65,6 +72,14 @@ impl Default for UiState {
 impl UiState {
     pub fn url(&self) -> String {
         format!("http://{}:{}", self.ip, self.port)
+    }
+    /// QR payload: paired URL so a scan lands straight in the session.
+    pub fn url_with_token(&self) -> String {
+        if self.auth_token.is_empty() {
+            self.url()
+        } else {
+            format!("{}?token={}", self.url(), self.auth_token)
+        }
     }
     pub fn next_tab(&mut self) {
         self.tab = match self.tab {

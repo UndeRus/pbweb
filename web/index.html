@@ -32,21 +32,26 @@ h2{ color:var(--title-color); margin:0 0 10px; }
 .nav-links a{ padding:10px 20px; color:var(--font-color); text-decoration:none; border-radius:4px; }
 .nav-links a.active{ background:var(--accent-color); color:#fff; }
 .nav-links a:not(.active):hover{ background:var(--accent-hover-color); color:#fff; }
-.toolbar{ display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
+.toolbar{ display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; align-items:center; }
 .btn{ padding:8px 14px; border:1px solid var(--border-color); border-radius:4px;
   background:var(--card-bg); color:var(--font-color); cursor:pointer; font-size:.92em; }
 .btn:hover:not(:disabled){ background:var(--accent-hover-color); color:#fff; border-color:var(--accent-hover-color); }
 .btn.primary{ background:var(--accent-color); border-color:var(--accent-color); color:#fff; }
 .btn.danger{ background:var(--danger); border-color:var(--danger); color:#fff; }
 .btn:disabled{ opacity:.45; cursor:default; }
+.search-input{ flex:1 1 160px; padding:8px 10px; border:1px solid var(--border-color);
+  border-radius:4px; background:var(--card-bg); color:var(--font-color); font-size:.92em; }
 .breadcrumb-inline{ display:flex; gap:4px; flex-wrap:wrap; align-items:center; }
 .breadcrumb-inline button{ border:none; background:none; color:var(--accent-color);
   cursor:pointer; font-size:1em; padding:2px 4px; }
 .breadcrumb-inline button:hover{ text-decoration:underline; }
 .summary-inline{ color:var(--label-color); font-size:.9em; margin-left:auto; }
-table{ width:100%; border-collapse:collapse; }
+#fileTable{ overflow-x:auto; }
+#fileTable table{ width:100%; min-width:560px; border-collapse:collapse; }
 th,td{ text-align:left; padding:9px 8px; border-bottom:1px solid var(--border-color); }
 th{ color:var(--label-color); font-size:.85em; text-transform:uppercase; }
+th.sortable{ cursor:pointer; user-select:none; }
+th.sortable:hover{ color:var(--accent-color); }
 tr.rowlink{ cursor:pointer; }
 tr.rowlink:hover td{ background:var(--accent-10); }
 td.name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:260px; }
@@ -54,6 +59,8 @@ td.name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:
 .icon-btn{ border:1px solid var(--border-color); background:var(--card-bg); color:var(--font-color);
   border-radius:4px; padding:5px 9px; margin:0 2px; cursor:pointer; font-size:.9em; }
 .icon-btn:hover{ background:var(--accent-hover-color); color:#fff; }
+.pager{ display:flex; gap:8px; align-items:center; justify-content:flex-end; margin-top:10px;
+  color:var(--label-color); font-size:.9em; }
 .drop-zone{ border:2px dashed var(--accent-color); border-radius:8px; padding:22px;
   text-align:center; color:var(--label-color); margin:12px 0; cursor:pointer; }
 .drop-zone.over{ background:var(--accent-10); }
@@ -61,37 +68,59 @@ td.name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:
 #progress-bar{ height:10px; background:var(--border-color); border-radius:5px; overflow:hidden; }
 #progress-fill{ height:100%; width:0; background:var(--accent-color); }
 #progress-text{ font-size:.85em; color:var(--label-color); margin-top:4px; }
+#upQueue{ margin:8px 0; }
+.up-row{ display:flex; gap:8px; align-items:center; padding:6px 0;
+  border-bottom:1px solid var(--border-color); font-size:.9em; }
+.up-row .n{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.up-row .st{ color:var(--label-color); white-space:nowrap; }
+.up-row .st.err{ color:var(--danger); }
+.up-row .st.ok{ color:var(--accent-hover-color); }
 .failed-banner{ display:none; background:#fdecea; color:var(--danger);
   border-radius:8px; padding:12px 16px; margin:15px 0; }
+#errLogWrap{ margin:0 0 15px; font-size:.85em; }
+#errLogWrap summary{ cursor:pointer; color:var(--label-color); }
+#errLog div{ padding:2px 0; border-bottom:1px dotted var(--border-color); }
+#errLog .t{ color:var(--label-color); margin-right:6px; }
 .modal-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.45);
   align-items:center; justify-content:center; z-index:10; padding:16px; }
 .modal-overlay.open{ display:flex; }
-.modal{ background:var(--card-bg); border-radius:8px; padding:20px; width:100%; max-width:420px; }
+.modal{ background:var(--card-bg); border-radius:8px; padding:20px; width:100%; max-width:420px;
+  max-height:90vh; overflow-y:auto; }
 .modal h2{ margin-bottom:6px; }
 .file-info{ color:var(--label-color); }
 .folder-input{ width:100%; padding:9px 10px; border:1px solid var(--border-color);
   border-radius:4px; background:var(--bg); color:var(--font-color); margin:8px 0 12px; }
-.modal .row{ display:flex; gap:8px; justify-content:flex-end; }
+.modal .row{ display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; }
+#moveList button{ display:block; width:100%; text-align:left; border:1px solid var(--border-color);
+  background:var(--card-bg); color:var(--font-color); border-radius:4px;
+  padding:8px 10px; margin:4px 0; cursor:pointer; }
+#moveList button:hover{ background:var(--accent-10); }
 .footer{ text-align:center; color:#95a5a6; margin:0; }
 .muted{ color:var(--label-color); font-size:.9em; }
+@media (max-width:480px){
+  body{ padding:12px; }
+  h1{ font-size:1.3em; }
+  .nav-links a{ padding:8px 12px; }
+  .card{ padding:14px; }
+}
 </style>
 </head>
 <body>
 <h1>PBWeb</h1>
 <div class="nav-links">
-  <a href="#/" id="navHome" class="active">Home</a>
-  <a href="#/files" id="navFiles">File Manager</a>
+  <a href="#/" id="navHome" class="active" data-i18n="nav.home">Home</a>
+  <a href="#/files" id="navFiles" data-i18n="nav.files">File Manager</a>
 </div>
 
 <!-- HOME -->
 <section id="viewHome">
   <div class="card">
-    <h2>Device Status</h2>
-    <div class="info-row"><span class="label">Device</span><span class="value" id="stDevice">PocketBook</span></div>
-    <div class="info-row"><span class="label">Version</span><span class="value" id="stVersion">…</span></div>
-    <div class="info-row"><span class="label">WiFi Status</span><span class="status">Connected</span></div>
-    <div class="info-row"><span class="label">IP Address</span><span class="value" id="stIp">…</span></div>
-    <div class="info-row"><span class="label">Storage</span><span class="value" id="stRoots">…</span></div>
+    <h2 data-i18n="home.title">Device Status</h2>
+    <div class="info-row"><span class="label" data-i18n="home.device">Device</span><span class="value" id="stDevice">PocketBook</span></div>
+    <div class="info-row"><span class="label" data-i18n="home.version">Version</span><span class="value" id="stVersion">…</span></div>
+    <div class="info-row"><span class="label" data-i18n="home.wifi">WiFi Status</span><span class="status" data-i18n="home.wifiOn">Connected</span></div>
+    <div class="info-row"><span class="label" data-i18n="home.ip">IP Address</span><span class="value" id="stIp">…</span></div>
+    <div class="info-row"><span class="label" data-i18n="home.storage">Storage</span><span class="value" id="stRoots">…</span></div>
   </div>
   <div class="card"><p class="footer">PBWeb • PocketBook file transfer</p></div>
 </section>
@@ -99,79 +128,115 @@ td.name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:
 <!-- FILES -->
 <section id="viewFiles" style="display:none">
   <div class="failed-banner" id="failedBanner"></div>
+  <details id="errLogWrap" hidden>
+    <summary><span data-i18n="err.title">Error log</span> (<span id="errCount">0</span>) <button class="btn" id="errClear" data-i18n="err.clear">Clear</button></summary>
+    <div id="errLog"></div>
+  </details>
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-      <h2>File Manager</h2>
+      <h2 data-i18n="fm.title">File Manager</h2>
       <span class="summary-inline" id="folderSummary"></span>
     </div>
     <div class="breadcrumb-inline" id="crumbs" style="margin:8px 0"></div>
     <div class="toolbar">
       <button class="btn" id="btnInt">internal</button>
       <button class="btn" id="btnSd">sdcard</button>
-      <button class="btn primary" id="btnUpload">Upload</button>
-      <button class="btn" id="btnMkdir">New folder</button>
-      <button class="btn" id="btnZip">Download .zip</button>
-      <button class="btn danger" id="btnDelSel" disabled>Delete selected</button>
+      <button class="btn primary" id="btnUpload" data-i18n="tb.upload">Upload</button>
+      <button class="btn" id="btnMkdir" data-i18n="tb.mkdir">New folder</button>
+      <button class="btn" id="btnZip" data-i18n="tb.zip">Download .zip</button>
+      <button class="btn danger" id="btnDelSel" disabled data-i18n="tb.delsel">Delete selected</button>
+      <input type="search" id="searchInput" class="search-input" data-i18n-ph="search.ph" placeholder="Search in folder...">
     </div>
     <input type="file" id="fileInput" multiple hidden>
-    <div class="drop-zone" id="dropZone">Drop files here or click Upload</div>
+    <div class="drop-zone" id="dropZone" data-i18n="drop.text">Drop files here or click Upload</div>
     <div id="progress-container">
       <div id="progress-bar"><div id="progress-fill"></div></div>
       <div id="progress-text"></div>
     </div>
-    <div id="fileTable"><p class="muted">Loading…</p></div>
+    <div id="upQueue"></div>
+    <div id="fileTable"><p class="muted" data-i18n="fm.loading">Loading…</p></div>
+    <div class="pager" id="pager" hidden>
+      <button class="btn" id="pgPrev" data-i18n="pg.prev">← Prev</button>
+      <span id="pgInfo"></span>
+      <button class="btn" id="pgNext" data-i18n="pg.next">Next →</button>
+    </div>
   </div>
-  <div class="card"><p class="footer">Uploads overwrite same-name files • only empty folders can be deleted</p></div>
+  <div class="card"><p class="footer" data-i18n="fm.footer">Uploads overwrite same-name files • only empty folders can be deleted</p></div>
 </section>
 
 <!-- MODALS -->
 <div class="modal-overlay" id="folderModal">
   <div class="modal">
-    <h2>New folder</h2>
-    <p class="file-info">Create in <strong id="folderPathDisplay"></strong></p>
-    <input type="text" id="folderName" class="folder-input" placeholder="Folder name...">
+    <h2 data-i18n="modal.newfolder.title">New folder</h2>
+    <p class="file-info"><span data-i18n="modal.newfolder.info">Create in</span> <strong id="folderPathDisplay"></strong></p>
+    <input type="text" id="folderName" class="folder-input" data-i18n-ph="modal.newfolder.ph" placeholder="Folder name...">
     <div class="row">
-      <button class="btn" data-close>Cancel</button>
-      <button class="btn primary" id="createFolderBtn">Create Folder</button>
+      <button class="btn" data-close data-i18n="modal.cancel">Cancel</button>
+      <button class="btn primary" id="createFolderBtn" data-i18n="modal.create">Create Folder</button>
     </div>
   </div>
 </div>
 
 <div class="modal-overlay" id="renameModal">
   <div class="modal">
-    <h2>Rename</h2>
-    <p class="file-info">Renaming <strong id="renameItemName"></strong></p>
-    <input type="text" id="renameNewName" class="folder-input" placeholder="New name...">
+    <h2 data-i18n="modal.rename.title">Rename</h2>
+    <p class="file-info"><span data-i18n="modal.rename.info">Renaming</span> <strong id="renameItemName"></strong></p>
+    <input type="text" id="renameNewName" class="folder-input" data-i18n-ph="modal.rename.ph" placeholder="New name...">
     <input type="hidden" id="renameItemPath">
     <div class="row">
-      <button class="btn" data-close>Cancel</button>
-      <button class="btn primary" id="renameConfirmBtn">Rename</button>
+      <button class="btn" data-close data-i18n="modal.cancel">Cancel</button>
+      <button class="btn primary" id="renameConfirmBtn" data-i18n="modal.rename.ok">Rename</button>
     </div>
   </div>
 </div>
 
 <div class="modal-overlay" id="moveModal">
   <div class="modal">
-    <h2>Move</h2>
-    <p class="file-info">Moving <strong id="moveItemName"></strong></p>
-    <input type="text" id="moveDestPath" class="folder-input" list="moveFolderOptions" placeholder="int:/Destination/Folder">
-    <datalist id="moveFolderOptions"></datalist>
+    <h2 data-i18n="modal.move.title">Move</h2>
+    <p class="file-info"><span data-i18n="modal.move.info">Moving</span> <strong id="moveItemName"></strong></p>
+    <p class="file-info"><span data-i18n="modal.move.dest">Destination:</span> <strong id="moveCurPath"></strong></p>
+    <div id="moveList"></div>
     <input type="hidden" id="moveItemPath">
     <div class="row">
-      <button class="btn" data-close>Cancel</button>
-      <button class="btn primary" id="moveConfirmBtn">Move</button>
+      <button class="btn" data-close data-i18n="modal.cancel">Cancel</button>
+      <button class="btn primary" id="moveConfirmBtn" data-i18n="modal.move.here">Move here</button>
     </div>
   </div>
 </div>
 
 <div class="modal-overlay" id="deleteModal">
   <div class="modal">
-    <h2>Delete?</h2>
+    <h2 data-i18n="modal.delete.title">Delete?</h2>
     <div id="deleteItemList" style="max-height:240px;overflow:auto;margin-bottom:10px"></div>
     <div class="row">
-      <button class="btn" data-close>Cancel</button>
-      <button class="btn danger" id="deleteConfirmBtn">Delete</button>
+      <button class="btn" data-close data-i18n="modal.cancel">Cancel</button>
+      <button class="btn danger" id="deleteConfirmBtn" data-i18n="modal.delete.ok">Delete</button>
     </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="overwriteModal">
+  <div class="modal">
+    <h2 data-i18n="modal.overwrite.title">Files exist</h2>
+    <p class="file-info" data-i18n="modal.overwrite.info">These files already exist in the destination:</p>
+    <div id="overwriteList" style="max-height:240px;overflow:auto;margin-bottom:10px"></div>
+    <div class="row">
+      <button class="btn" id="overwriteCancel" data-i18n="modal.cancel">Cancel</button>
+      <button class="btn" id="overwriteSkip" data-i18n="modal.overwrite.skip">Skip existing</button>
+      <button class="btn primary" id="overwriteAll" data-i18n="modal.overwrite.all">Overwrite all</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="lockOverlay">
+  <div class="modal">
+    <h2 data-i18n="lock.title">Access protected</h2>
+    <p class="file-info" data-i18n="lock.info">Enter the 6-digit code shown on the reader screen</p>
+    <input type="text" id="tokenInput" class="folder-input" placeholder="123456" inputmode="numeric" autocomplete="off" maxlength="6">
+    <div class="row">
+      <button class="btn primary" id="tokenBtn" data-i18n="lock.ok">Connect</button>
+    </div>
+    <p class="file-info" id="lockHint"></p>
   </div>
 </div>
 
@@ -179,24 +244,143 @@ td.name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:
 let cur = "int:/";
 let itemsCache = [];
 let pendingDelete = [];
+let selPaths = new Set();
+let selNames = new Map();
+let fq = { q: "", sort: "name", order: "asc", limit: 100, offset: 0 };
+let totalCount = 0;
+let upJobs = [];
+let upRunning = false;
+let upXhr = null;
+let searchTimer = null;
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+// strip control chars for *displayed* text (paths in data-* stay raw so actions keep working)
+const san = s => esc(String(s).replace(/[\x00-\x1F\x7F]/g, ""));
+
+// ---- i18n ----
+const I18N = {
+en: {
+  "nav.home": "Home", "nav.files": "File Manager",
+  "home.title": "Device Status", "home.device": "Device", "home.version": "Version",
+  "home.wifi": "WiFi Status", "home.wifiOn": "Connected", "home.ip": "IP Address", "home.storage": "Storage",
+  "fm.title": "File Manager", "fm.loading": "Loading…",
+  "fm.footer": "Uploads overwrite same-name files • only empty folders can be deleted",
+  "tb.upload": "Upload", "tb.mkdir": "New folder", "tb.zip": "Download .zip",
+  "tb.delsel": "Delete selected", "search.ph": "Search in folder...",
+  "drop.text": "Drop files here or click Upload",
+  "col.name": "Name", "col.type": "Type", "col.size": "Size", "col.actions": "Actions",
+  "empty": "Empty folder",
+  "pg.prev": "← Prev", "pg.next": "Next →", "pg.of": "Showing {a}–{b} of {n}",
+  "modal.cancel": "Cancel", "modal.create": "Create Folder",
+  "modal.newfolder.title": "New folder", "modal.newfolder.info": "Create in", "modal.newfolder.ph": "Folder name...",
+  "modal.rename.title": "Rename", "modal.rename.info": "Renaming", "modal.rename.ph": "New name...", "modal.rename.ok": "Rename",
+  "modal.move.title": "Move", "modal.move.info": "Moving", "modal.move.dest": "Destination:",
+  "modal.move.here": "Move here", "modal.move.up": "↑ Up",
+  "modal.delete.title": "Delete?", "modal.delete.ok": "Delete",
+  "modal.overwrite.title": "Files exist", "modal.overwrite.info": "These files already exist in the destination:",
+  "modal.overwrite.all": "Overwrite all", "modal.overwrite.skip": "Skip existing",
+  "lock.title": "Access protected", "lock.info": "Enter the 6-digit code shown on the reader screen",
+  "lock.ok": "Connect", "lock.hint": "6 digits, e.g. 123456", "lock.bad": "Wrong or expired code — check the reader screen.",
+  "up.retry": "Retry", "up.cancel": "Cancel upload", "up.cancelled": "cancelled", "up.failed": "failed",
+  "up.done": "done", "up.waiting": "waiting…", "up.skipped": "skipped",
+  "err.title": "Error log", "err.clear": "Clear",
+  "msg.noSdcard": "no sdcard", "msg.items": "{n} items ({d} folders)",
+},
+ru: {
+  "nav.home": "Главная", "nav.files": "Файлы",
+  "home.title": "Состояние устройства", "home.device": "Устройство", "home.version": "Версия",
+  "home.wifi": "Статус WiFi", "home.wifiOn": "Подключено", "home.ip": "IP-адрес", "home.storage": "Хранилище",
+  "fm.title": "Файловый менеджер", "fm.loading": "Загрузка…",
+  "fm.footer": "Заливка перезаписывает одноимённые файлы • удалять можно только пустые папки",
+  "tb.upload": "Загрузить", "tb.mkdir": "Новая папка", "tb.zip": "Скачать .zip",
+  "tb.delsel": "Удалить выбранные", "search.ph": "Поиск в папке...",
+  "drop.text": "Перетащите файлы сюда или нажмите Загрузить",
+  "col.name": "Имя", "col.type": "Тип", "col.size": "Размер", "col.actions": "Действия",
+  "empty": "Папка пуста",
+  "pg.prev": "← Назад", "pg.next": "Далее →", "pg.of": "Показано {a}–{b} из {n}",
+  "modal.cancel": "Отмена", "modal.create": "Создать папку",
+  "modal.newfolder.title": "Новая папка", "modal.newfolder.info": "Создать в", "modal.newfolder.ph": "Имя папки...",
+  "modal.rename.title": "Переименовать", "modal.rename.info": "Переименование", "modal.rename.ph": "Новое имя...", "modal.rename.ok": "Переименовать",
+  "modal.move.title": "Переместить", "modal.move.info": "Перемещение", "modal.move.dest": "Назначение:",
+  "modal.move.here": "Сюда", "modal.move.up": "↑ Вверх",
+  "modal.delete.title": "Удалить?", "modal.delete.ok": "Удалить",
+  "modal.overwrite.title": "Файлы существуют", "modal.overwrite.info": "Эти файлы уже есть в папке назначения:",
+  "modal.overwrite.all": "Перезаписать всё", "modal.overwrite.skip": "Пропустить существующие",
+  "lock.title": "Доступ защищён", "lock.info": "Введи 6-значный код с экрана книги",
+  "lock.ok": "Войти", "lock.hint": "6 цифр, например 123456", "lock.bad": "Неверный или устаревший код — смотри экран книги.",
+  "up.retry": "Повторить", "up.cancel": "Отменить загрузку", "up.cancelled": "отменено", "up.failed": "ошибка",
+  "up.done": "готово", "up.waiting": "ожидание…", "up.skipped": "пропущено",
+  "err.title": "Журнал ошибок", "err.clear": "Очистить",
+  "msg.noSdcard": "нет SD-карты", "msg.items": "{n} шт. ({d} папок)",
+}};
+const LANG = (navigator.language || "en").toLowerCase().startsWith("ru") ? "ru" : "en";
+function t(key, params) {
+  let s = (I18N[LANG] && I18N[LANG][key]) || I18N.en[key] || key;
+  if (params) for (const k in params) s = s.replace("{" + k + "}", params[k]);
+  return s;
+}
+function applyI18n() {
+  document.documentElement.lang = LANG;
+  document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll("[data-i18n-ph]").forEach(el => { el.placeholder = t(el.dataset.i18nPh); });
+}
+
+// ---- pairing token (shown on the e-ink screen, new per СТАРТ) ----
+function getToken() { return sessionStorage.getItem("pbweb-token") || ""; }
+function withToken(u) {
+  const t = getToken();
+  if (!t) return u;
+  return u + (u.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(t);
+}
+function showLock(msg) {
+  if (msg) $("#lockHint").textContent = msg;
+  $("#lockOverlay").classList.add("open");
+}
+function hideLock() { $("#lockOverlay").classList.remove("open"); }
+(function bootToken() {
+  try {
+    const t = new URLSearchParams(location.search).get("token");
+    if (t && /^\d{6}$/.test(t)) {
+      sessionStorage.setItem("pbweb-token", t);
+      history.replaceState(null, "", location.pathname + location.hash);
+    }
+  } catch (e) {}
+  if (!getToken()) showLock("");
+})();
+$("#tokenBtn").onclick = () => {
+  const t = $("#tokenInput").value.trim();
+  if (!/^\d{6}$/.test(t)) { $("#lockHint").textContent = t("lock.hint"); return; }
+  sessionStorage.setItem("pbweb-token", t);
+  $("#tokenInput").value = "";
+  hideLock();
+  route();
+};
+$("#tokenInput").addEventListener("keydown", e => { if (e.key === "Enter") $("#tokenBtn").click(); });
 
 async function api(u, o) {
-  const r = await fetch(u, o);
+  const r = await fetch(withToken(u), o);
   const ct = r.headers.get("content-type") || "";
   const body = ct.includes("json") ? await r.json() : await r.text();
+  if (r.status === 401) { showLock(t("lock.bad")); throw new Error("unauthorized"); }
   if (!r.ok) throw new Error((body && body.error) || (typeof body === "string" ? body : r.statusText).slice(0, 300));
   return body;
 }
+const errLog = [];
 function fail(msg) {
   const b = $("#failedBanner");
   b.style.display = "block";
   b.textContent = msg;
   clearTimeout(fail._t);
   fail._t = setTimeout(() => b.style.display = "none", 6000);
+  errLog.unshift(new Date().toLocaleTimeString() + " " + msg);
+  if (errLog.length > 20) errLog.pop();
+  const w = $("#errLogWrap"), l = $("#errLog");
+  w.hidden = false;
+  $("#errCount").textContent = errLog.length;
+  l.innerHTML = errLog.map(m => "<div><span class='t'>" + esc(m.slice(0, 8)) + "</span>" + esc(m.slice(9)) + "</div>").join("");
 }
+$("#errClear").onclick = () => { errLog.length = 0; $("#errLog").innerHTML = ""; $("#errCount").textContent = "0"; $("#errLogWrap").hidden = true; };
 
 // ---- nav ----
 function route() {
@@ -205,7 +389,10 @@ function route() {
   $("#viewFiles").style.display = files ? "" : "none";
   $("#navHome").className = files ? "" : "active";
   $("#navFiles").className = files ? "active" : "";
-  if (files) load(cur);
+  if (files) {
+    if (!getToken()) { showLock(""); return; }
+    load(cur);
+  }
   else loadStatus();
 }
 window.addEventListener("hashchange", route);
@@ -238,39 +425,70 @@ function ftype(it) {
   return (e || "file").toUpperCase();
 }
 async function load(p) {
-  cur = p || cur;
+  if (p !== undefined) { cur = p; fq.offset = 0; }
   try {
-    const items = await api("/api/files?path=" + encodeURIComponent(cur));
+    const res = await api("/api/files?path=" + encodeURIComponent(cur)
+      + "&q=" + encodeURIComponent(fq.q) + "&sort=" + fq.sort + "&order=" + fq.order
+      + "&limit=" + fq.limit + "&offset=" + fq.offset);
+    const items = res.items || [];
+    totalCount = res.total || 0;
     itemsCache = items;
     const ndirs = items.filter(i => i.is_dir).length;
-    $("#folderSummary").textContent = cur + " — " + items.length + " items (" + ndirs + " folders)";
+    $("#folderSummary").textContent = cur + " — " + t("msg.items", { n: totalCount, d: ndirs });
     crumbs();
-    const t = $("#fileTable");
-    if (!items.length) { t.innerHTML = '<p class="muted">Empty folder</p>'; $("#btnDelSel").disabled = true; return; }
-    let h = '<table><tr><th style="width:34px"><input type="checkbox" id="selAll"></th><th>Name</th><th>Type</th><th>Size</th><th>Actions</th></tr>';
+    renderPager();
+    const tbl = $("#fileTable");
+    if (!items.length) { tbl.innerHTML = '<p class="muted">' + esc(t("empty")) + "</p>"; updDelBtn(); return; }
+    const sortMark = c => (fq.sort === c ? (fq.order === "asc" ? " ▲" : " ▼") : "");
+    let h = '<table><tr><th style="width:34px"><input type="checkbox" id="selAll" aria-label="select all"></th>'
+      + '<th class="sortable" data-sort="name">' + esc(t("col.name")) + sortMark("name") + "</th>"
+      + "<th>" + esc(t("col.type")) + "</th>"
+      + '<th class="sortable" data-sort="size">' + esc(t("col.size")) + sortMark("size") + "</th>"
+      + "<th>" + esc(t("col.actions")) + "</th></tr>";
     for (const it of items) {
-      const nm = esc(it.name);
+      const nm = san(it.name);
+      const checked = selPaths.has(it.path) ? " checked" : "";
       h += '<tr data-path="' + esc(it.path) + '" data-dir="' + (it.is_dir ? 1 : 0) + '" data-name="' + nm + '">'
-        + '<td><input type="checkbox" class="sel"></td>'
+        + '<td><input type="checkbox" class="sel"' + checked + ' aria-label="select"></td>'
         + '<td class="name">' + (it.is_dir ? "📁 " : "📄 ") + nm + "</td>"
         + "<td>" + ftype(it) + "</td>"
         + "<td>" + (it.is_dir ? "—" : fmt(it.size)) + "</td>"
         + '<td class="actions">'
         + (it.is_dir
-            ? '<button class="icon-btn" data-act="zip" title="Download as zip">🗜</button>'
-            : '<button class="icon-btn" data-act="dl" title="Download">⬇</button>')
-        + '<button class="icon-btn" data-act="ren" title="Rename">✏</button>'
-        + '<button class="icon-btn" data-act="mv" title="Move">➡</button>'
-        + '<button class="icon-btn" data-act="del" title="Delete">🗑</button>'
+            ? '<button class="icon-btn" data-act="zip" title="Download as zip" aria-label="Download as zip">🗜</button>'
+            : '<button class="icon-btn" data-act="dl" title="Download" aria-label="Download">⬇</button>')
+        + '<button class="icon-btn" data-act="ren" title="Rename" aria-label="Rename">✏</button>'
+        + '<button class="icon-btn" data-act="mv" title="Move" aria-label="Move">➡</button>'
+        + '<button class="icon-btn" data-act="del" title="Delete" aria-label="Delete">🗑</button>'
         + "</td></tr>";
     }
-    t.innerHTML = h + "</table>";
+    tbl.innerHTML = h + "</table>";
+    tbl.querySelectorAll("th.sortable").forEach(th => th.onclick = () => {
+      const k = th.dataset.sort;
+      if (fq.sort === k) fq.order = fq.order === "asc" ? "desc" : "asc";
+      else { fq.sort = k; fq.order = "asc"; }
+      fq.offset = 0;
+      load();
+    });
+    const all = items.length > 0 && items.every(it => selPaths.has(it.path));
+    $("#selAll").checked = all;
     $("#selAll").onchange = e => {
-      document.querySelectorAll(".sel").forEach(c => c.checked = e.target.checked);
+      items.forEach(it => {
+        if (e.target.checked) { selPaths.add(it.path); selNames.set(it.path, it.name); }
+        else { selPaths.delete(it.path); selNames.delete(it.path); }
+      });
       updDelBtn();
+      load();
     };
-    t.querySelectorAll(".sel").forEach(c => c.onchange = updDelBtn);
-    t.querySelectorAll("tr[data-path]").forEach(tr => {
+    tbl.querySelectorAll(".sel").forEach(c => c.onchange = () => {
+      const tr = c.closest("tr");
+      if (c.checked) { selPaths.add(tr.dataset.path); selNames.set(tr.dataset.path, tr.dataset.name); }
+      else { selPaths.delete(tr.dataset.path); selNames.delete(tr.dataset.path); }
+      updDelBtn();
+      const boxes = [...tbl.querySelectorAll(".sel")];
+      $("#selAll").checked = boxes.length > 0 && boxes.every(x => x.checked);
+    });
+    tbl.querySelectorAll("tr[data-path]").forEach(tr => {
       tr.addEventListener("click", e => {
         if (e.target.closest("button") || e.target.type === "checkbox") return;
         if (tr.dataset.dir === "1") load(tr.dataset.path);
@@ -280,8 +498,26 @@ async function load(p) {
     updDelBtn();
   } catch (e) { fail("load: " + e.message); }
 }
+function renderPager() {
+  const pg = $("#pager");
+  if (totalCount <= fq.limit) { pg.hidden = true; return; }
+  pg.hidden = false;
+  const a = totalCount === 0 ? 0 : fq.offset + 1;
+  const b = Math.min(fq.offset + fq.limit, totalCount);
+  $("#pgInfo").textContent = t("pg.of", { a, b, n: totalCount });
+  $("#pgPrev").disabled = fq.offset === 0;
+  $("#pgNext").disabled = fq.offset + fq.limit >= totalCount;
+}
+$("#pgPrev").onclick = () => { fq.offset = Math.max(0, fq.offset - fq.limit); load(); };
+$("#pgNext").onclick = () => { fq.offset += fq.limit; load(); };
+$("#searchInput").addEventListener("input", e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { fq.q = e.target.value.trim(); fq.offset = 0; load(); }, 300);
+});
 function updDelBtn() {
-  $("#btnDelSel").disabled = !document.querySelector(".sel:checked");
+  const btn = $("#btnDelSel");
+  btn.disabled = selPaths.size === 0;
+  btn.textContent = selPaths.size > 0 ? t("tb.delsel") + " (" + selPaths.size + ")" : t("tb.delsel");
 }
 function crumbs() {
   const c = $("#crumbs"); c.innerHTML = "";
@@ -304,71 +540,251 @@ function crumbs() {
 // ---- row actions ----
 function act(kind, tr) {
   const path = tr.dataset.path, name = tr.dataset.name, isDir = tr.dataset.dir === "1";
-  if (kind === "dl") { location.href = "/api/download?path=" + encodeURIComponent(path); }
-  else if (kind === "zip") { location.href = "/api/zip?path=" + encodeURIComponent(path); }
+  if (kind === "dl") { location.href = withToken("/api/download?path=" + encodeURIComponent(path)); }
+  else if (kind === "zip") { location.href = withToken("/api/zip?path=" + encodeURIComponent(path)); }
   else if (kind === "ren") {
     $("#renameItemName").textContent = name;
     $("#renameItemPath").value = path;
     $("#renameNewName").value = name;
     openModal("#renameModal");
+    setTimeout(() => $("#renameNewName").focus(), 50);
   }
   else if (kind === "mv") {
     $("#moveItemName").textContent = name;
     $("#moveItemPath").value = path;
-    $("#moveDestPath").value = cur;
-    const dl = $("#moveFolderOptions"); dl.innerHTML = "";
-    for (const it of itemsCache) if (it.is_dir) {
-      const o = document.createElement("option"); o.value = it.path; dl.appendChild(o);
-    }
+    openMovePicker(cur);
     openModal("#moveModal");
   }
   else if (kind === "del") { pendingDelete = [path]; showDelete([name]); }
 }
-function selectedPaths() {
-  return [...document.querySelectorAll("tr[data-path]")].filter(tr => tr.querySelector(".sel").checked);
-}
 
 // ---- modals ----
 function openModal(s) { $(s).classList.add("open"); }
-function closeModals() { document.querySelectorAll(".modal-overlay").forEach(m => m.classList.remove("open")); }
+function closeModals() { document.querySelectorAll(".modal-overlay").forEach(m => { if (m.id !== "lockOverlay") m.classList.remove("open"); }); }
 document.querySelectorAll("[data-close]").forEach(b => b.onclick = closeModals);
-document.querySelectorAll(".modal-overlay").forEach(m => m.addEventListener("click", e => { if (e.target === m) closeModals(); }));
+document.querySelectorAll(".modal-overlay").forEach(m => m.addEventListener("click", e => { if (e.target === m && m.id !== "lockOverlay") closeModals(); }));
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !$("#lockOverlay").classList.contains("open")) closeModals();
+});
+function busy(on) {
+  document.querySelectorAll(".toolbar .btn, #dropZone").forEach(el => {
+    if ("disabled" in el) el.disabled = on ? true : el.id === "btnDelSel" ? selPaths.size === 0 : false;
+  });
+  document.querySelectorAll(".modal .btn.primary, .modal .btn.danger").forEach(el => { el.disabled = on; });
+}
 
-$("#btnMkdir").onclick = () => { $("#folderPathDisplay").textContent = cur; $("#folderName").value = ""; openModal("#folderModal"); };
-$("#createFolderBtn").onclick = async () => {
+$("#btnMkdir").onclick = () => { $("#folderPathDisplay").textContent = cur; $("#folderName").value = ""; openModal("#folderModal"); setTimeout(() => $("#folderName").focus(), 50); };
+$("#createFolderBtn").onclick = async e => {
   const name = $("#folderName").value.trim();
   if (!name) return;
+  busy(true);
   try { await api("/api/mkdir", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: cur, name }) }); closeModals(); load(); }
-  catch (e) { fail("mkdir: " + e.message); }
+  catch (err) { fail("mkdir: " + err.message); }
+  finally { busy(false); }
 };
+$("#folderName").addEventListener("keydown", e => { if (e.key === "Enter") $("#createFolderBtn").click(); });
 $("#renameConfirmBtn").onclick = async () => {
   const path = $("#renameItemPath").value, name = $("#renameNewName").value.trim();
   if (!name) return;
+  busy(true);
   try { await api("/api/rename", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, name }) }); closeModals(); load(); }
-  catch (e) { fail("rename: " + e.message); }
+  catch (err) { fail("rename: " + err.message); }
+  finally { busy(false); }
 };
+$("#renameNewName").addEventListener("keydown", e => { if (e.key === "Enter") $("#renameConfirmBtn").click(); });
+
+// ---- move folder picker ----
+let moveDest = cur;
+async function openMovePicker(start) {
+  moveDest = start;
+  await renderMoveList();
+}
+async function renderMoveList() {
+  $("#moveCurPath").textContent = moveDest;
+  const box = $("#moveList");
+  box.innerHTML = '<p class="muted">…</p>';
+  try {
+    const res = await api("/api/files?path=" + encodeURIComponent(moveDest) + "&limit=1000");
+    const dirs = (res.items || []).filter(it => it.is_dir);
+    let h = "";
+    if (moveDest !== "int:/" && moveDest !== "sd:/") {
+      h += '<button data-up="1">' + esc(t("modal.move.up")) + "</button>";
+    }
+    for (const d of dirs) h += "<button data-p=\"" + esc(d.path) + "\">" + san(d.name) + "</button>";
+    if (!dirs.length && h === "") h = '<p class="muted">' + esc(t("empty")) + "</p>";
+    box.innerHTML = h;
+    const up = box.querySelector("[data-up]");
+    if (up) up.onclick = async () => {
+      const [root, rest] = moveDest.split(":/");
+      const parts = (rest || "").split("/").filter(Boolean);
+      parts.pop();
+      moveDest = root + ":/" + parts.join("/");
+      await renderMoveList();
+    };
+    box.querySelectorAll("[data-p]").forEach(b => b.onclick = async () => { moveDest = b.dataset.p; await renderMoveList(); });
+  } catch (e) { fail("move: " + e.message); }
+}
 $("#moveConfirmBtn").onclick = async () => {
-  const path = $("#moveItemPath").value, dest = $("#moveDestPath").value.trim();
-  if (!dest) return;
-  try { await api("/api/move", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, dest }) }); closeModals(); load(); }
-  catch (e) { fail("move: " + e.message); }
+  const path = $("#moveItemPath").value;
+  if (!moveDest) return;
+  busy(true);
+  try { await api("/api/move", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, dest: moveDest }) }); closeModals(); load(); }
+  catch (err) { fail("move: " + err.message); }
+  finally { busy(false); }
 };
 function showDelete(names) {
-  $("#deleteItemList").innerHTML = names.map(n => "<div>" + esc(n) + "</div>").join("");
+  $("#deleteItemList").innerHTML = names.map(n => "<div>" + san(n) + "</div>").join("");
   openModal("#deleteModal");
 }
 $("#btnDelSel").onclick = () => {
-  const sel = selectedPaths();
-  pendingDelete = sel.map(tr => tr.dataset.path);
-  showDelete(sel.map(tr => tr.dataset.name));
+  pendingDelete = [...selPaths];
+  showDelete([...selPaths].map(p => selNames.get(p) || p));
 };
-$("#deleteConfirmBtn").onclick = async () => {
-  try { await api("/api/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paths: pendingDelete }) }); closeModals(); load(); }
-  catch (e) { fail("delete: " + e.message); }
+$("#deleteConfirmBtn").onclick = async e => {
+  const btn = e.target;
+  btn.disabled = true;
+  try {
+    await api("/api/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paths: pendingDelete }) });
+    for (const p of pendingDelete) { selPaths.delete(p); selNames.delete(p); }
+    pendingDelete = [];
+    closeModals();
+    load();
+  }
+  catch (err) { fail("delete: " + err.message); }
+  finally { btn.disabled = false; }
 };
-$("#btnZip").onclick = () => { location.href = "/api/zip?path=" + encodeURIComponent(cur); };
+$("#btnZip").onclick = () => { location.href = withToken("/api/zip?path=" + encodeURIComponent(cur)); };
 
-// ---- upload (XHR for progress) ----
+// ---- overwrite confirm ----
+function askOverwrite(names) {
+  $("#overwriteList").innerHTML = names.map(n => "<div>" + san(n) + "</div>").join("");
+  openModal("#overwriteModal");
+  return new Promise(res => {
+    $("#overwriteAll").onclick = () => { closeModals(); res("all"); };
+    $("#overwriteSkip").onclick = () => { closeModals(); res("skip"); };
+    $("#overwriteCancel").onclick = () => { closeModals(); res(null); };
+  });
+}
+
+// ---- upload queue: sequential, per-file status, retry, cancel ----
+function renderQueue() {
+  const box = $("#upQueue");
+  if (!upJobs.length) { box.innerHTML = ""; return; }
+  box.innerHTML = upJobs.map((j, i) => {
+    let st, cls = "";
+    if (j.st === "queued") st = t("up.waiting");
+    else if (j.st === "active") st = j.pct + "%";
+    else if (j.st === "done") { st = "✓ " + t("up.done"); cls = "ok"; }
+    else if (j.st === "skipped") { st = t("up.skipped"); }
+    else if (j.st === "cancelled") { st = t("up.cancelled"); }
+    else { st = "✕ " + (j.err || t("up.failed")); cls = "err"; }
+    const retry = (j.st === "error" || j.st === "cancelled")
+      ? ' <button class="icon-btn" data-retry="' + i + '">' + esc(t("up.retry")) + "</button>" : "";
+    return '<div class="up-row"><span class="n">' + san(j.file.name) + "</span>"
+      + '<span class="st ' + cls + '">' + esc(st) + "</span>" + retry + "</div>";
+  }).join("")
+  + (upRunning
+    ? '<div class="up-row"><button class="icon-btn" id="upCancelBtn">' + esc(t("up.cancel")) + "</button></div>"
+    : "");
+  box.querySelectorAll("[data-retry]").forEach(b => b.onclick = () => {
+    const j = upJobs[+b.dataset.retry];
+    j.st = "queued"; j.pct = 0; j.err = "";
+    renderQueue();
+    runQueue();
+  });
+  const c = $("#upCancelBtn");
+  if (c) c.onclick = cancelUpload;
+}
+function cancelUpload() {
+  if (upXhr) { try { upXhr.abort(); } catch (e) {} upXhr = null; }
+  upJobs.forEach(j => { if (j.st === "queued" || j.st === "active") { j.st = "cancelled"; } });
+  upRunning = false;
+  busyUpload(false);
+  renderQueue();
+}
+function busyUpload(on) {
+  ["btnUpload", "btnMkdir", "btnZip", "btnDelSel", "btnInt", "btnSd"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && "disabled" in el) el.disabled = on ? true : (id === "btnDelSel" ? selPaths.size === 0 : false);
+  });
+  dz.style.pointerEvents = on ? "none" : "";
+  dz.style.opacity = on ? ".55" : "";
+}
+function uploadOne(job) {
+  return new Promise(resolve => {
+    const fd = new FormData();
+    fd.append("files", job.file, job.file.name);
+    const xhr = new XMLHttpRequest();
+    upXhr = xhr;
+    xhr.open("POST", withToken("/api/upload?path=" + encodeURIComponent(cur)));
+    $("#progress-container").style.display = "block";
+    xhr.upload.onprogress = e => {
+      const pct = e.lengthComputable ? Math.round(e.loaded / e.total * 100) : 0;
+      job.pct = pct;
+      $("#progress-fill").style.width = pct + "%";
+      $("#progress-text").textContent = "Uploading… " + pct + "%";
+      renderQueue();
+    };
+    const fin = ok => {
+      upXhr = null;
+      $("#progress-container").style.display = "none";
+      $("#progress-fill").style.width = "0";
+      resolve(ok);
+    };
+    xhr.onload = () => {
+      if (xhr.status === 401) { showLock(t("lock.bad")); job.st = "error"; job.err = "unauthorized"; }
+      else if (xhr.status >= 200 && xhr.status < 300) job.st = "done";
+      else { job.st = "error"; job.err = xhr.responseText.slice(0, 200); }
+      renderQueue();
+      fin(true);
+    };
+    xhr.onerror = () => { job.st = "error"; job.err = "network"; renderQueue(); fin(true); };
+    xhr.onabort = () => { job.st = "cancelled"; renderQueue(); fin(true); };
+    xhr.send(fd);
+  });
+}
+async function runQueue() {
+  if (upRunning) return;
+  upRunning = true;
+  busyUpload(true);
+  renderQueue();
+  for (const job of upJobs) {
+    if (job.st !== "queued") continue;
+    job.st = "active";
+    renderQueue();
+    await uploadOne(job);
+    if (!upRunning) break;
+  }
+  upRunning = false;
+  busyUpload(false);
+  renderQueue();
+  load();
+}
+async function uploadFiles(fileList) {
+  if (!fileList || !fileList.length) return;
+  const files = [...fileList];
+  $("#fileInput").value = "";
+  // overwrite check first
+  let skip = new Set();
+  try {
+    const r = await api("/api/exists", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dir: cur, names: files.map(f => f.name) }) });
+    const conflicts = (r.exists || []).filter(n => files.some(f => f.name === n));
+    if (conflicts.length) {
+      const choice = await askOverwrite(conflicts);
+      if (choice === null) return;
+      if (choice === "skip") skip = new Set(conflicts);
+    }
+  } catch (e) { fail("upload: " + e.message); return; }
+  upJobs = files
+    .filter(f => !skip.has(f.name))
+    .map(f => ({ file: f, st: "queued", pct: 0, err: "" }));
+  if (skip.size) {
+    for (const f of files) if (skip.has(f.name)) upJobs.push({ file: f, st: "skipped", pct: 0, err: "" });
+  }
+  renderQueue();
+  runQueue();
+}
 $("#btnUpload").onclick = () => $("#fileInput").click();
 $("#dropZone").onclick = () => $("#fileInput").click();
 const dz = $("#dropZone");
@@ -376,35 +792,15 @@ const dz = $("#dropZone");
 ["dragleave", "drop"].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove("over"); }));
 dz.addEventListener("drop", e => uploadFiles(e.dataTransfer.files));
 $("#fileInput").onchange = e => { uploadFiles(e.target.files); e.target.value = ""; };
-function uploadFiles(files) {
-  if (!files || !files.length) return;
-  const fd = new FormData();
-  for (const f of files) fd.append("files", f, f.name);
-  const xhr = new XMLHttpRequest();
-  xhr.open("POST", "/api/upload?path=" + encodeURIComponent(cur));
-  $("#progress-container").style.display = "block";
-  xhr.upload.onprogress = e => {
-    const pct = e.lengthComputable ? Math.round(e.loaded / e.total * 100) : 0;
-    $("#progress-fill").style.width = pct + "%";
-    $("#progress-text").textContent = "Uploading… " + pct + "%";
-  };
-  xhr.onload = () => {
-    $("#progress-container").style.display = "none";
-    $("#progress-fill").style.width = "0";
-    if (xhr.status >= 200 && xhr.status < 300) load();
-    else fail("upload: " + xhr.responseText.slice(0, 200));
-  };
-  xhr.onerror = () => { $("#progress-container").style.display = "none"; fail("upload failed"); };
-  xhr.send(fd);
-}
 
 // ---- roots ----
-$("#btnInt").onclick = () => load("int:/");
+$("#btnInt").onclick = () => { selPaths.clear(); selNames.clear(); load("int:/"); };
 $("#btnSd").onclick = async () => {
-  try { const r = await api("/api/roots"); if (!r.sdcard) { fail("no sdcard"); return; } load("sd:/"); }
+  try { const r = await api("/api/roots"); if (!r.sdcard) { fail(t("msg.noSdcard")); return; } selPaths.clear(); selNames.clear(); load("sd:/"); }
   catch (e) { fail(e.message); }
 };
 
+applyI18n();
 route();
 </script>
 </body>
