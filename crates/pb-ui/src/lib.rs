@@ -377,8 +377,9 @@ pub enum Dirty {
 }
 
 /// Geometry of the status tab. Mirrors draw_status() flow exactly:
-/// title(44) + state(64) + url(200) + wifi(54), then QR+hint or steps(130),
+/// title(44) + state(64) + url(200) + wifi(54), then QR+pin or steps(130),
 /// then upload line(110) + bar(30). `qr_size_px = 0` selects steps mode.
+/// QR mode mid block: square + 8px gap + 40px caption + 110px big PIN.
 pub struct StatusLayout {
     pub title: Rect,
     pub state: Rect,
@@ -431,7 +432,7 @@ pub fn status_layout(
     };
     y += 62;
     let (mid, qr) = if qr_size_px > 0 {
-        let qh = qr_size_px + 8 + 44;
+        let qh = qr_size_px + 8 + 40 + 110;
         let r = Rect {
             x: GAP,
             y,
@@ -655,15 +656,15 @@ mod tests {
     }
     #[test]
     fn status_layout_qr_upload_mode() {
-        // serving with 330px QR + progress bar
+        // serving with 330px QR + progress bar; mid holds QR + caption + big PIN
         let l = status_layout(1072, 1448, 330, true, true);
-        assert_eq!(l.mid, Rect { x: 16, y: 410, w: 1040, h: 382 });
+        assert_eq!(l.mid, Rect { x: 16, y: 410, w: 1040, h: 488 });
         assert_eq!(l.qr, Some(Rect { x: 371, y: 410, w: 330, h: 330 }));
-        assert_eq!(l.upload_line, Some(Rect { x: 16, y: 800, w: 1040, h: 110 }));
-        assert_eq!(l.upload_bar, Some(Rect { x: 16, y: 912, w: 1040, h: 30 }));
-        // upload block ends (942) well above the fixed message line (1246)
+        assert_eq!(l.upload_line, Some(Rect { x: 16, y: 906, w: 1040, h: 110 }));
+        assert_eq!(l.upload_bar, Some(Rect { x: 16, y: 1018, w: 1040, h: 30 }));
+        // upload block ends (1048) well above the fixed message line (1246)
         let u = upload_union(&l).unwrap();
-        assert_eq!(u, Rect { x: 16, y: 800, w: 1040, h: 142 });
+        assert_eq!(u, Rect { x: 16, y: 906, w: 1040, h: 142 });
         assert!(u.y + u.h <= l.message.y);
         assert!(upload_union(&status_layout(1072, 1448, 0, false, false)).is_none());
     }

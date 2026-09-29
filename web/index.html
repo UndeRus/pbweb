@@ -11,21 +11,29 @@
   --accent-color:rgb(110,154,130); --accent-10:rgba(110,154,130,.12);
   --accent-hover-color:#5a8c73; --danger:#c0392b;
 }
+*,*::before,*::after{ box-sizing:border-box; }
+html,body{ max-width:100%; overflow-x:hidden; }
 @media (prefers-color-scheme: dark){
   :root{ --font-color:#f5f5f5; --bg:#333; --title-color:#ecf0f1; --card-bg:#444;
     --label-color:#bdc3c7; --border-color:#555; color-scheme:dark; }
 }
 body{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,sans-serif;
-  max-width:800px; margin:0 auto; padding:20px; background:var(--bg); color:var(--font-color); }
+  max-width:800px; margin:0 auto; padding:20px; background:var(--bg); color:var(--font-color);
+  overflow-x:hidden; }
+html{ overflow-x:hidden; }
+body.locked{ overflow:hidden; }
+/* pairing lock hides everything behind it (even if overlay were transparent) */
+body.locked > :not(#lockOverlay){ visibility:hidden; }
+#lockOverlay{ visibility:visible; }
 h1{ color:var(--title-color); border-bottom:2px solid var(--accent-color); padding-bottom:10px; }
 h2{ color:var(--title-color); margin:0 0 10px; }
 .card{ background:var(--card-bg); border-radius:8px; padding:20px; margin:15px 0;
   box-shadow:0 2px 4px rgba(0,0,0,.1); }
 .info-row{ display:flex; justify-content:space-between; align-items:center; gap:10px;
-  padding:8px 0; border-bottom:1px solid var(--border-color); }
+  padding:8px 0; border-bottom:1px solid var(--border-color); min-width:0; }
 .info-row:last-child{ border-bottom:none; }
-.label{ font-weight:600; color:var(--label-color); }
-.value{ color:var(--title-color); overflow:hidden; text-overflow:ellipsis; }
+.label{ font-weight:600; color:var(--label-color); flex-shrink:0; }
+.value{ color:var(--title-color); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
 .status{ display:inline-block; padding:4px 12px; border-radius:12px;
   background:#27ae60; color:#fff; font-size:.9em; }
 .nav-links{ margin:20px 0; display:flex; gap:10px; }
@@ -39,15 +47,21 @@ h2{ color:var(--title-color); margin:0 0 10px; }
 .btn.primary{ background:var(--accent-color); border-color:var(--accent-color); color:#fff; }
 .btn.danger{ background:var(--danger); border-color:var(--danger); color:#fff; }
 .btn:disabled{ opacity:.45; cursor:default; }
-.search-input{ flex:1 1 160px; padding:8px 10px; border:1px solid var(--border-color);
+.search-input{ flex:1 1 160px; min-width:0; padding:8px 10px; border:1px solid var(--border-color);
   border-radius:4px; background:var(--card-bg); color:var(--font-color); font-size:.92em; }
 .breadcrumb-inline{ display:flex; gap:4px; flex-wrap:wrap; align-items:center; }
 .breadcrumb-inline button{ border:none; background:none; color:var(--accent-color);
   cursor:pointer; font-size:1em; padding:2px 4px; }
 .breadcrumb-inline button:hover{ text-decoration:underline; }
 .summary-inline{ color:var(--label-color); font-size:.9em; margin-left:auto; }
-#fileTable{ overflow-x:auto; }
-#fileTable table{ width:100%; min-width:560px; border-collapse:collapse; }
+#fileTable{ overflow-x:auto; max-width:100%; }
+#fileTable table{ width:100%; max-width:100%; border-collapse:collapse; table-layout:fixed; }
+#fileTable th:nth-child(1),#fileTable td:nth-child(1){ width:34px; }
+#fileTable th:nth-child(4),#fileTable td:nth-child(4){ width:58px; }
+#fileTable th:last-child,#fileTable td:last-child{ width:152px; }
+@media (max-width:560px){
+  #fileTable th:last-child,#fileTable td:last-child{ width:118px; }
+}
 th,td{ text-align:left; padding:9px 8px; border-bottom:1px solid var(--border-color); }
 th{ color:var(--label-color); font-size:.85em; text-transform:uppercase; }
 th.sortable{ cursor:pointer; user-select:none; }
@@ -55,7 +69,13 @@ th.sortable:hover{ color:var(--accent-color); }
 tr.rowlink{ cursor:pointer; }
 tr.rowlink:hover td{ background:var(--accent-10); }
 td.name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:260px; }
-.actions{ white-space:nowrap; }
+@media (max-width:560px){
+  td.name{ white-space:normal; word-break:break-word; max-width:none; }
+  th,td{ padding:7px 5px; font-size:.85em; }
+  .icon-btn{ padding:4px 6px; margin:0 1px; }
+  th:nth-child(3),td:nth-child(3){ display:none; }
+}
+.actions{ white-space:nowrap; overflow:hidden; }
 .icon-btn{ border:1px solid var(--border-color); background:var(--card-bg); color:var(--font-color);
   border-radius:4px; padding:5px 9px; margin:0 2px; cursor:pointer; font-size:.9em; }
 .icon-btn:hover{ background:var(--accent-hover-color); color:#fff; }
@@ -71,7 +91,7 @@ td.name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:
 #upQueue{ margin:8px 0; }
 .up-row{ display:flex; gap:8px; align-items:center; padding:6px 0;
   border-bottom:1px solid var(--border-color); font-size:.9em; }
-.up-row .n{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.up-row .n{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .up-row .st{ color:var(--label-color); white-space:nowrap; }
 .up-row .st.err{ color:var(--danger); }
 .up-row .st.ok{ color:var(--accent-hover-color); }
@@ -84,6 +104,16 @@ td.name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:
 .modal-overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.45);
   align-items:center; justify-content:center; z-index:10; padding:16px; }
 .modal-overlay.open{ display:flex; }
+/* pairing lock: fullscreen, solid dark, above everything */
+#lockOverlay{ background:#141414; z-index:100; padding:20px; overflow-y:auto; overscroll-behavior:contain; }
+#lockOverlay.open{ display:flex; }
+#lockOverlay .modal{ box-shadow:0 8px 40px rgba(0,0,0,.6); margin:auto; }
+.pin-row{ display:flex; gap:8px; justify-content:center; margin:12px 0; max-width:100%; }
+.pin-box{ width:46px; height:56px; flex:1 1 0; min-width:0; max-width:46px; text-align:center; font-size:1.5em;
+  border:2px solid var(--border-color); border-radius:8px; background:var(--bg);
+  color:var(--font-color); caret-color:var(--accent-color); padding:0; }
+.pin-box:focus{ outline:none; border-color:var(--accent-color); }
+@media (max-width:380px){ .pin-row{ gap:6px; } .pin-box{ height:50px; font-size:1.3em; } }
 .modal{ background:var(--card-bg); border-radius:8px; padding:20px; width:100%; max-width:420px;
   max-height:90vh; overflow-y:auto; }
 .modal h2{ margin-bottom:6px; }
@@ -232,7 +262,14 @@ td.name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:
   <div class="modal">
     <h2 data-i18n="lock.title">Access protected</h2>
     <p class="file-info" data-i18n="lock.info">Enter the 6-digit code shown on the reader screen</p>
-    <input type="text" id="tokenInput" class="folder-input" placeholder="123456" inputmode="numeric" autocomplete="off" maxlength="6">
+    <div class="pin-row" id="pinRow" role="group" aria-label="PIN code">
+      <input type="text" class="pin-box" inputmode="numeric" autocomplete="one-time-code" maxlength="1" aria-label="Digit 1">
+      <input type="text" class="pin-box" inputmode="numeric" autocomplete="off" maxlength="1" aria-label="Digit 2">
+      <input type="text" class="pin-box" inputmode="numeric" autocomplete="off" maxlength="1" aria-label="Digit 3">
+      <input type="text" class="pin-box" inputmode="numeric" autocomplete="off" maxlength="1" aria-label="Digit 4">
+      <input type="text" class="pin-box" inputmode="numeric" autocomplete="off" maxlength="1" aria-label="Digit 5">
+      <input type="text" class="pin-box" inputmode="numeric" autocomplete="off" maxlength="1" aria-label="Digit 6">
+    </div>
     <div class="row">
       <button class="btn primary" id="tokenBtn" data-i18n="lock.ok">Connect</button>
     </div>
@@ -334,10 +371,16 @@ function withToken(u) {
   return u + (u.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(t);
 }
 function showLock(msg) {
-  if (msg) $("#lockHint").textContent = msg;
+  $("#lockHint").textContent = msg || "";
+  document.querySelectorAll(".pin-box").forEach(b => { b.value = ""; });
   $("#lockOverlay").classList.add("open");
+  document.body.classList.add("locked");
+  setTimeout(() => { const f = document.querySelector(".pin-box"); if (f) f.focus(); }, 50);
 }
-function hideLock() { $("#lockOverlay").classList.remove("open"); }
+function hideLock() {
+  $("#lockOverlay").classList.remove("open");
+  document.body.classList.remove("locked");
+}
 (function bootToken() {
   try {
     const t = new URLSearchParams(location.search).get("token");
@@ -348,15 +391,62 @@ function hideLock() { $("#lockOverlay").classList.remove("open"); }
   } catch (e) {}
   if (!getToken()) showLock("");
 })();
-$("#tokenBtn").onclick = () => {
-  const t = $("#tokenInput").value.trim();
+function pinValue() {
+  return [...document.querySelectorAll(".pin-box")].map(b => b.value).join("");
+}
+function submitPin() {
+  const t = pinValue();
   if (!/^\d{6}$/.test(t)) { $("#lockHint").textContent = t("lock.hint"); return; }
   sessionStorage.setItem("pbweb-token", t);
-  $("#tokenInput").value = "";
   hideLock();
   route();
-};
-$("#tokenInput").addEventListener("keydown", e => { if (e.key === "Enter") $("#tokenBtn").click(); });
+}
+$("#tokenBtn").onclick = submitPin;
+document.querySelectorAll(".pin-box").forEach((box, i, boxes) => {
+  box.addEventListener("focus", () => { try { box.select(); } catch (e) {} });
+  box.addEventListener("input", () => {
+    // digits-only; multi-char input (autofill / password manager / paste
+    // without a paste event) spreads over this and all following boxes,
+    // so pasting into the first box fills the whole code
+    const digits = box.value.replace(/\D/g, "");
+    if (digits.length > 1) {
+      const chars = digits.slice(0, boxes.length - i).split("");
+      chars.forEach((d, k) => { boxes[i + k].value = d; });
+      const next = Math.min(i + chars.length, boxes.length - 1);
+      boxes[next].focus();
+      try { boxes[next].select(); } catch (e) {}
+    } else {
+      box.value = digits.slice(-1);
+      if (box.value && i < boxes.length - 1) boxes[i + 1].focus();
+    }
+    if (pinValue().length === 6) submitPin();
+  });
+  box.addEventListener("keydown", e => {
+    if (e.key === "Backspace" && !box.value && i > 0) {
+      boxes[i - 1].focus();
+      boxes[i - 1].value = "";
+      e.preventDefault();
+    } else if (e.key === "Enter") {
+      submitPin();
+    } else if (e.key === "ArrowLeft" && i > 0) {
+      boxes[i - 1].focus();
+    } else if (e.key === "ArrowRight" && i < boxes.length - 1) {
+      boxes[i + 1].focus();
+    }
+  });
+  // paste fills this box and all following ones (paste into the first
+  // box fills the whole code)
+  box.addEventListener("paste", e => {
+    e.preventDefault();
+    const digits = ((e.clipboardData && e.clipboardData.getData("text")) || "")
+      .replace(/\D/g, "").slice(0, boxes.length - i).split("");
+    if (!digits.length) return;
+    digits.forEach((d, k) => { boxes[i + k].value = d; });
+    const next = Math.min(i + digits.length, boxes.length - 1);
+    boxes[next].focus();
+    if (pinValue().length === 6) submitPin();
+  });
+});
 
 async function api(u, o) {
   const r = await fetch(withToken(u), o);

@@ -39,6 +39,8 @@ mod device {
     const F_BODY: i32 = 36;
     const F_STATE: i32 = 44;
     const F_URL: i32 = 60;
+    /// Pairing PIN on the e-ink screen: must be readable at arm's length.
+    const F_PIN: i32 = 96;
 
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -340,20 +342,29 @@ mod device {
                             }
                         }
                         with_font(F_TITLE, iv::BLACK, |_| unsafe {
-                            let hint = if state.auth_token.is_empty() {
-                                "Отсканируй камерой телефона".to_owned()
-                            } else {
-                                format!(
-                                    "Отсканируй камерой • Код {}",
-                                    group_pin(&state.auth_token)
-                                )
-                            };
-                            let hint = cstring(&hint);
+                            let cap = cstring("Код для входа:");
                             iv::DrawTextRect(
-                                l.mid.x, l.mid.y + qr_size + 8, l.mid.w, 44,
-                                hint.as_ptr(), iv::ALIGN_CENTER,
+                                l.mid.x, l.mid.y + qr_size + 8, l.mid.w, 40,
+                                cap.as_ptr(), iv::ALIGN_CENTER,
                             );
                         });
+                        if !state.auth_token.is_empty() {
+                            with_font(F_PIN, iv::BLACK, |_| unsafe {
+                                let pin = cstring(&group_pin(&state.auth_token));
+                                iv::DrawTextRect(
+                                    l.mid.x, l.mid.y + qr_size + 48, l.mid.w, 110,
+                                    pin.as_ptr(), iv::ALIGN_CENTER,
+                                );
+                            });
+                        } else {
+                            with_font(F_TITLE, iv::BLACK, |_| unsafe {
+                                let hint = cstring("Отсканируй камерой телефона");
+                                iv::DrawTextRect(
+                                    l.mid.x, l.mid.y + qr_size + 48, l.mid.w, 110,
+                                    hint.as_ptr(), iv::ALIGN_CENTER,
+                                );
+                            });
+                        }
                         return;
                     }
                 }
@@ -361,6 +372,28 @@ mod device {
         }
         with_font(F_TITLE, iv::BLACK, |_| unsafe {
             iv::FillArea(l.mid.x, l.mid.y, l.mid.w, l.mid.h, iv::WHITE);
+            // No QR (e.g. small landscape screen that can't fit a readable
+            // code): the pairing PIN is still shown huge — it is the only
+            // thing a second phone needs to connect.
+            if state.server_on && !state.auth_token.is_empty() {
+                let cap = cstring("Код для входа:");
+                iv::DrawTextRect(
+                    l.mid.x, l.mid.y, l.mid.w, 30,
+                    cap.as_ptr(), iv::ALIGN_CENTER,
+                );
+            }
+        });
+        if state.server_on && !state.auth_token.is_empty() {
+            with_font(F_PIN, iv::BLACK, |_| unsafe {
+                let pin = cstring(&group_pin(&state.auth_token));
+                iv::DrawTextRect(
+                    l.mid.x, l.mid.y + 30, l.mid.w, 100,
+                    pin.as_ptr(), iv::ALIGN_CENTER,
+                );
+            });
+            return;
+        }
+        with_font(F_TITLE, iv::BLACK, |_| unsafe {
             // keyonly builds describe keys (no touch hints for old readers).
             #[cfg(feature = "keyonly")]
             let steps = cstring("1. Подключи телефон к этому WiFi\n2. Открой адрес выше в браузере\n3. ОК - старт/стоп, НАЗАД - выход");
