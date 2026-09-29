@@ -123,8 +123,6 @@ Status → BACK выход; PREV/NEXT листают. Прислать
    and add `"U_pbweb"` to a group. Reboot/unplug to refresh.
    Regenerate icons anytime: `python assets/make_icons.py`.
 
-![PBWeb icon](assets/pbweb-preview.png)
-
 Device run: open `pbweb.app` → big СТАРТ button (or MENU key) → Yes in the
 WiFi prompt → non-blocking connect (silent first, then async, 45s cap with
 countdown) → huge URL + QR code underneath (scan with phone camera to open
@@ -163,6 +161,26 @@ No `EVT_STOPSCAN` — the firmware answers it "Not Implemented".
 
 Diagnostics: the app appends to `/mnt/ext1/pbweb.log` (startup, key/touch codes,
 WiFi steps, panics). If something crashes, send this file — it tells exactly where.
+
+## Screenshots
+
+Web UI in the phone browser (paired by scanning the QR or typing the 6-digit
+PIN from the reader screen):
+
+<img src="assets/shots/web-lock-mobile.png" width="270"> <img src="assets/shots/web-home-mobile.png" width="270"> <img src="assets/shots/web-files-mobile.png" width="270">
+
+Same UI on desktop:
+
+<img src="assets/shots/web-files-desktop.png" width="720">
+<img src="assets/shots/web-lock-desktop.png" width="720">
+<img src="assets/shots/web-home-desktop.png" width="720">
+
+Reader (e-ink) screens — pixel-accurate mockups (exact layout math and fonts
+from the firmware draw code), not device photos. Serving state with the big
+pairing PIN, idle state, Pro 903 landscape PIN-only fallback, file list:
+
+<img src="assets/shots/633-status-serving.png" width="300"> <img src="assets/shots/633-status-idle.png" width="300"> <img src="assets/shots/633-files.png" width="300">
+<img src="assets/shots/903-status-serving.png" width="620">
 
 ## API
 
