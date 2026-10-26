@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="UTF-8"><title>PBWeb Pro 903 — Status serving, PIN only (mock)</title>
+<style>
+html,body{margin:0;padding:0;background:#fff;}
+.screen{position:relative;width:1200px;height:825px;background:#fff;overflow:hidden;
+  font-family:Arial,"Liberation Sans",sans-serif;color:#000;}
+.t{position:absolute;left:16px;width:1168px;white-space:nowrap;overflow:hidden;}
+.title{top:16px;height:44px;font-size:30px;line-height:44px;}
+.state{top:68px;height:64px;font-size:44px;line-height:64px;}
+.url{top:140px;height:200px;font-size:60px;line-height:1.1;}
+.wifi{top:348px;height:54px;font-size:36px;line-height:54px;}
+.cap{top:410px;height:30px;font-size:30px;line-height:30px;text-align:center;}
+.pin{top:440px;height:100px;font-size:96px;line-height:100px;text-align:center;letter-spacing:2px;}
+.msg{top:623px;height:48px;font-size:30px;line-height:48px;}
+.btn{position:absolute;top:695px;height:110px;width:378px;border:2px solid #000;
+  display:flex;align-items:center;justify-content:center;font-size:36px;background:#fff;}
+.btn::after{content:"";position:absolute;left:3px;top:3px;right:3px;bottom:3px;border:2px solid #000;}
+</style></head>
+<body><div class="screen">
+<div class="t title">PBWeb - передача файлов</div>
+<div class="t state">Сервер запущен</div>
+<div class="t url">http://192.168.1.42:8080</div>
+<div class="t wifi">WiFi: включён</div>
+<div class="t cap">Код для входа:</div>
+<div class="t pin">123 456</div>
+<div class="t msg">Сервер запущен</div>
+<div class="btn" style="left:16px">СТОП</div>
+<div class="btn" style="left:411px">ФАЙЛЫ</div>
+<div class="btn" style="left:806px">ВЫХОД</div>
+</div></body></html>

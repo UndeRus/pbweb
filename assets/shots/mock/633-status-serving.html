@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="UTF-8"><title>PBWeb 633 — Status serving (mock)</title>
+<style>
+html,body{margin:0;padding:0;background:#fff;}
+.screen{position:relative;width:1072px;height:1448px;background:#fff;overflow:hidden;
+  font-family:Arial,"Liberation Sans",sans-serif;color:#000;}
+.t{position:absolute;left:16px;width:1040px;white-space:nowrap;overflow:hidden;}
+.title{top:16px;height:44px;font-size:30px;line-height:44px;}
+.state{top:68px;height:64px;font-size:44px;line-height:64px;}
+.url{top:140px;height:200px;font-size:60px;line-height:1.1;}
+.wifi{top:348px;height:54px;font-size:36px;line-height:54px;}
+#qr{position:absolute;left:371px;top:410px;width:330px;height:330px;display:block;}
+.cap{top:748px;height:40px;font-size:30px;line-height:40px;text-align:center;}
+.pin{top:788px;height:110px;font-size:96px;line-height:110px;text-align:center;letter-spacing:2px;}
+.msg{top:1246px;height:48px;font-size:30px;line-height:48px;}
+.btn{position:absolute;top:1318px;height:110px;width:336px;border:2px solid #000;
+  display:flex;align-items:center;justify-content:center;font-size:36px;background:#fff;}
+.btn::after{content:"";position:absolute;left:3px;top:3px;right:3px;bottom:3px;border:2px solid #000;}
+</style></head>
+<body><div class="screen">
+<div class="t title">PBWeb - передача файлов</div>
+<div class="t state">Сервер запущен</div>
+<div class="t url">http://192.168.1.42:8080</div>
+<div class="t wifi">WiFi: HomeNet</div>
+<canvas id="qr"></canvas>
+<div class="t cap">Код для входа:</div>
+<div class="t pin">123 456</div>
+<div class="t msg">Сервер запущен</div>
+<div class="btn" style="left:16px">СТОП</div>
+<div class="btn" style="left:368px">ФАЙЛЫ</div>
+<div class="btn" style="left:720px">ВЫХОД</div>
+</div>
+<script>
+(function(){
+  var c=document.getElementById('qr'),x=c.getContext('2d');
+  var N=25,Q=4,S=10,sz=(N+2*Q)*S;c.width=c.height=sz;
+  x.fillStyle='#fff';x.fillRect(0,0,sz,sz);x.fillStyle='#000';
+  var seed=20260929;function rnd(){seed=(seed*1103515245+12345)&0x7fffffff;return seed/0x7fffffff;}
+  function finder(cx,cy){x.fillStyle='#000';x.fillRect((Q+cx)*S,(Q+cy)*S,7*S,7*S);
+    x.fillStyle='#fff';x.fillRect((Q+cx+1)*S,(Q+cy+1)*S,5*S,5*S);
+    x.fillStyle='#000';x.fillRect((Q+cx+2)*S,(Q+cy+2)*S,3*S,3*S);}
+  function inF(mx,my){return (mx<8&&my<8)||(mx>=N-8&&my<8)||(mx<8&&my>=N-8);}
+  for(var my=0;my<N;my++)for(var mx=0;mx<N;mx++){if(inF(mx,my))continue;if(rnd()<0.45)x.fillRect((Q+mx)*S,(Q+my)*S,S,S);}
+  finder(0,0);finder(N-7,0);finder(0,N-7);
+})();
+</script></body></html>
